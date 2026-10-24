@@ -65,18 +65,30 @@ function recordHeader(trail) {
 }
 
 function searchSection(members) {
-  return section("1", "Search", "Each database that returned this record, and the query that found it.",
+  const intro = "Each database that returned this record, and the search or chasing round that found it.";
+
+  return section("1", "Found by", intro,
     members.map((member) => h("div", { class: "member" },
       h("h3", {},
         `${DATABASE_NAMES[member.database] ?? member.database} · `,
         h("span", { class: "mono" }, member.source_id),
       ),
-      h("p", { class: "muted" }, member.run
-        ? `Search run ${member.run}, ${formatTime(member.searched_at)}, ${member.hit_count} hits`
-        : "No search event logged for this database"),
+      h("p", { class: "muted" }, foundByText(member)),
       member.query && h("pre", { class: "query" }, formatQuery(member.query)),
     )),
   );
+}
+
+function foundByText(member) {
+  if (member.method === "chase") {
+    const directions = member.directions.join(" and ");
+
+    return `Citation chasing round ${member.run}, ${formatTime(member.searched_at)}, ${directions}`;
+  }
+
+  if (!member.run) return "No search event logged for this database";
+
+  return `Search run ${member.run}, ${formatTime(member.searched_at)}, ${member.hit_count} hits`;
 }
 
 function dedupSection(dedup) {

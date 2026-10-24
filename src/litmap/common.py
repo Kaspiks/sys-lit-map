@@ -94,6 +94,14 @@ def plain(value):
   return value.item() if hasattr(value, "item") else value
 
 
+def chase_rounds():
+  """Citation-chasing rounds in data/raw/chase/, oldest first: folders holding a records.csv."""
+  chase_dir = RAW_DIR / "chase"
+  rounds = chase_dir.iterdir() if chase_dir.exists() else []
+
+  return sorted(round_dir for round_dir in rounds if (round_dir / "records.csv").exists())
+
+
 def latest_run():
   """The newest complete search run in data/raw/ (a failed run has no records.csv)."""
   runs = RAW_DIR.iterdir() if RAW_DIR.exists() else []

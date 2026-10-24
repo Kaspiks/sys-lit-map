@@ -12,7 +12,7 @@ The full plan is in [docs/architecture.md](docs/architecture.md).
 | 1 | Search: Europe PMC, PubMed, OpenAlex (no year or language limits in the queries) | `search.py`, `sources/` | `data/raw/<run>/`, `logs/search.jsonl` | done |
 | 2 | Deduplication: DOI → PMID → title → fuzzy title, never across different DOIs | `dedup.py` | `data/interim/records.parquet`, `logs/dedup.jsonl` | done |
 | 3 | Screening: rule pre-filter → ranker → human decisions | `rules.py`, `rank.py`, `screening.py`, `ui/` | `data/interim/prefiltered.parquet`, `logs/screening.jsonl` | rules and screening UI done; ranker next |
-| 4 | Citation chasing via OpenAlex, new records back through stage 2 | `chase.py` | new candidate records | planned |
+| 4 | Citation chasing via OpenAlex, new records back through stage 2 | `chase.py` | `data/raw/chase/<round>/`, `logs/chase.jsonl` | plumbing done; OpenAlex calls next |
 | 5 | Extraction: intrinsic and extrinsic factors | `extract.py` | `data/processed/extraction.csv` | planned |
 | 6 | Reporting: PRISMA-ScR flow from the logs, charts, PRISMA-S search report | `report.py` | `outputs/` | planned |
 
@@ -86,7 +86,8 @@ src/litmap/
   trail.py         record trail: one record's history across all logs
   concepts.py      finding the search.yaml concept terms (screen highlighting, ranker features)
   ui/              screening interface (Flask app + one HTML page per view)
-  chase.py  extract.py  report.py   stages 4-6 (planned)
+  chase.py         stage 4: citation chasing through OpenAlex (OpenAlex calls to write)
+  extract.py  report.py   stages 5-6 (planned)
 ```
 
 ## Environment (Docker)
@@ -139,6 +140,16 @@ no attention while you screen; scores are logged with each decision but never sh
   gives the same ranking (`--replay 3` for one iteration).
 - Each iteration saves its model in `models/`, its ranking in `data/interim/rankings/`, and a
   `rank` line in `logs/screening.jsonl` with the training set, settings, concept terms and hashes.
+
+### Citation chasing
+
+`python -m litmap.chase` runs one round: the records you included (not chased before) are
+looked up in OpenAlex, and the works they cite (backward) and the works citing them (forward)
+that the pipeline hasn't seen are saved as `data/raw/chase/<round>/`, logged in
+`logs/chase.jsonl`. Then run `dedup.deduplicate()` and `rules.apply_rules()`: the new records
+join the screening queue, existing record ids stay the same. Repeat after screening them; stop
+when a round brings no new includes. Settings: the `chase:` section of `config/search.yaml`.
+The OpenAlex calls (`lookup_openalex_id`, `references`, `citations`) are still to write.
 
 ### Debugging in VS Code
 

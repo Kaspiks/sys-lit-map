@@ -33,11 +33,12 @@ def record_trail(record_id):
   screening_events = common.read_log("screening")
   rule_summary = _latest(screening_events, "rule_summary")
   searches = _search_events(dedup_summary["search_run"])
+  chased = _chased_works()
 
   return {
     "record_id": record_id,
     "record": {field: common.plain(record[field]) for field in RECORD_FIELDS},
-    "search": [_found_by(member, searches) for member in members],
+    "search": [_found_by(member, searches, chased) for member in members],
     "dedup": _dedup_section(record, members, dedup_summary),
     "rules": _rules_section(record, rule_summary),
     "screening": [event for event in screening_events if event.get("record_id") == record_id],
@@ -68,14 +69,39 @@ def _search_events(search_run):
   }
 
 
-def _found_by(member_id, searches):
+def _chased_works():
+  """{member id: chase round event} for every work a citation-chasing round added."""
+
+  return {
+    f"openalex:{work_id}": event
+    for event in common.read_log("chase")
+    for work_id in event.get("new_works", {})
+  }
+
+
+def _found_by(member_id, searches, chased):
   database, source_id = member_id.split(":", 1)
+
+  if member_id in chased:
+    chase_round = chased[member_id]
+
+    return {
+      "member_id": member_id,
+      "database": database,
+      "source_id": source_id,
+      "method": "chase",
+      "run": chase_round["round"],
+      "searched_at": chase_round["timestamp"],
+      "directions": chase_round["new_works"][source_id],
+    }
+
   search = searches.get(database, {})
 
   return {
     "member_id": member_id,
     "database": database,
     "source_id": source_id,
+    "method": "search",
     "run": search.get("run"),
     "searched_at": search.get("searched_at"),
     "query": search.get("query"),
@@ -101,7 +127,8 @@ def _dedup_section(record, members, dedup_summary):
 
 def _field_sources(record, members, dedup_summary):
   """Which member each merged field came from: the first, in priority order, with that value."""
-  stacked = common.read_records(common.ROOT / dedup_summary["input_file"])
+  inputs = [dedup_summary["input_file"], *[chase["file"] for chase in dedup_summary.get("chase_files", [])]]
+  stacked = pd.concat([common.read_records(common.ROOT / path) for path in inputs], ignore_index=True)
   stacked = stacked.assign(member_id=stacked["database"] + ":" + stacked["source_id"])
   rows = stacked[stacked["member_id"].isin(members)]
   rows = rows.assign(_priority=rows["database"].map(dedup.DATABASE_PRIORITY)).sort_values("_priority")
@@ -138,6 +165,8 @@ def _rules_section(record, rule_summary):
 def _file_checks(searches, dedup_summary, rule_summary):
   """Each file a log fingerprinted, and whether it still has the logged SHA-256."""
   logged = [(_raw_file(search), search.get("raw_sha256")) for search in searches]
+
+  logged += [(chase["file"], chase["sha256"]) for chase in dedup_summary.get("chase_files", [])]
 
   logged += [
     (dedup_summary["input_file"], dedup_summary["input_sha256"]),

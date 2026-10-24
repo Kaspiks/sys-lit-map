@@ -55,3 +55,8 @@ validation:
   - {label: "Bood 2013", doi: "10.1371/journal.pone.0070758", pmid: "23951000"}
   - {label: "Nijs 2020", doi: "10.3390/brainsci10050273", pmid: "32370091"}
   - {label: "Buhmann 2018", doi: "10.1371/journal.pone.0208702", pmid: "30521634"}
+
+# Citation chasing (stage 4, chase.py): which screening decisions to chase, and which ways.
+chase:
+  seed_labels: [include]  # add maybe to also chase records you're unsure about
+  directions: [backward, forward]  # backward: works they cite; forward: works citing them

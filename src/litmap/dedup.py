@@ -9,8 +9,10 @@ Steps 3 and 4 never join records with different DOIs, so in practice they only m
 records without a DOI. Step 4 also requires years at most MAX_YEAR_GAP apart and the same
 numbers in both titles ("Part 1" is not "Part 2").
 
-Each group becomes one row with the richest metadata, and every join is logged to
-logs/dedup.jsonl. Output: data/interim/records.parquet (and a .csv copy).
+The input is a search run's records.csv plus every citation-chasing round (chase.py), so
+chased works merge with the ones the search found. Each group becomes one row with the richest
+metadata, and every join is logged to logs/dedup.jsonl. Output: data/interim/records.parquet
+(and a .csv copy).
 """
 
 import re
@@ -38,7 +40,7 @@ MEMBER_SEPARATOR = "; "
 
 
 def deduplicate(run_dir=None, fuzzy_threshold=FUZZY_THRESHOLD):
-  """Deduplicate a search run's records.csv (default: the latest run) and save the result.
+  """Deduplicate a search run (default: the latest) with every chase round, and save the result.
 
   Writes data/interim/records.parquet (+ .csv) and appends one line per join, plus a
   summary with input/output hashes, to logs/dedup.jsonl. Returns the deduplicated table.
@@ -46,9 +48,12 @@ def deduplicate(run_dir=None, fuzzy_threshold=FUZZY_THRESHOLD):
 
   run_dir = Path(run_dir) if run_dir else common.latest_run()
   in_path = run_dir / "records.csv"
+  chase_paths = [round_dir / "records.csv" for round_dir in common.chase_rounds()]
   out_path = common.INTERIM_DIR / "records.parquet"
 
-  df = add_keys(common.read_records(in_path))
+  search_records = common.read_records(in_path)
+  chase_records = [common.read_records(path) for path in chase_paths]
+  df = add_keys(pd.concat([search_records, *chase_records], ignore_index=True))
   groups, joins, merges = find_groups(df, fuzzy_threshold)
   previous = pd.read_parquet(out_path) if out_path.exists() else None
   merged, retired = merge_groups(df, groups, previous)
@@ -66,6 +71,8 @@ def deduplicate(run_dir=None, fuzzy_threshold=FUZZY_THRESHOLD):
     "logged_at": common.now(),
     "input_file": common.relative(in_path),
     "input_sha256": common.sha256(in_path),
+    "chase_files": [{"file": common.relative(path), "sha256": common.sha256(path)} for path in chase_paths],
+    "chase_records": len(df) - len(search_records),
     "output_file": common.relative(out_path),
     "output_sha256": common.sha256(out_path),
     "records_in": len(df),
@@ -276,7 +283,8 @@ def _member_ids(df):
 
 def _longest_abstracts(df):
   """The richest abstract of each group: the longest one (ties go to the higher priority)."""
-  by_length = df.assign(_length=df["abstract"].str.len().fillna(0))
+  # as text even when every abstract is missing, which pandas would otherwise store as numbers
+  by_length = df.assign(_length=df["abstract"].astype("string").str.len().fillna(0))
   by_length = by_length.sort_values(["group", "_length"], ascending=[True, False], kind="stable")
 
   return by_length.groupby("group", sort=False)["abstract"].first()
@@ -333,7 +341,8 @@ def _log_merges(dedup_run, search_run, member_ids, merges):
 
 def _print_summary(summary):
   joins = ", ".join(f"{rule} {count}" for rule, count in summary["joins"].items())
-  print(f"search run {summary['search_run']}: {summary['records_in']} records")
+  chased = f", {summary['chase_records']} of them from citation chasing" if summary["chase_records"] else ""
+  print(f"search run {summary['search_run']}: {summary['records_in']} records{chased}")
   print(f"joins: {joins}")
 
   print(
