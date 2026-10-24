@@ -17,6 +17,8 @@ exclusion_reasons:
   - {code: other, label: "Other", note_required: true}
 
 ranker:
+  model: random_forest
+  batch_size: 25
   min_labels: {relevant: 5, irrelevant: 5}
   features: [words, concepts, metadata]
   n_estimators: 500

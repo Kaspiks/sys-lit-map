@@ -1,3 +1,5 @@
+import dataclasses
+
 import pandas as pd
 import pytest
 
@@ -106,3 +108,57 @@ def test_a_decision_for_a_record_not_due_next_is_refused(workspace):
 
   with pytest.raises(screening.StaleRecordError):
     workspace.decide(not_next, "include")
+
+
+def _ranking(order, trained_on=0):
+  scores = {record_id: 1 - position / 10 for position, record_id in enumerate(order)}
+
+  return screening.Ranking(iteration=1, trained_on=trained_on, order=order, scores=scores)
+
+
+def test_the_seed_set_keeps_its_random_order_and_the_ranking_orders_the_rest():
+  ranking = _ranking(["r9", "r5", "r1"])
+
+  order = screening.screening_order(["r1", "r2", "r5", "r9", "r7"], seed_set_size=2, ranking=ranking)
+
+  assert order == ["r1", "r2", "r9", "r5", "r7"]  # r7 isn't ranked, so it follows in random order
+
+
+def test_the_ranker_is_due_after_the_seed_set_and_then_after_every_batch(settings):
+  settings = dataclasses.replace(settings, seed_set_size=2, ranker={"batch_size": 2})
+
+  workspace = screening.Workspace(
+    settings=settings, pool=_pool(), order=list(_pool().index), key_ids=set(), key_total=0, decisions={},
+  )
+
+  def decide(*record_ids):
+    workspace.decisions.update({record_id: {"label": "exclude"} for record_id in record_ids})
+
+  decide("pubmed:0")
+  assert not workspace.ranker_due()  # seed set not done
+
+  decide("pubmed:1")
+  assert workspace.ranker_due()  # seed set done, no ranking yet
+
+  workspace.ranking = _ranking(["pubmed:2", "pubmed:3", "pubmed:4"], trained_on=2)
+  decide("pubmed:2")
+  assert not workspace.ranker_due()  # 1 of 2 new decisions
+
+  decide("pubmed:3")
+  assert workspace.ranker_due()
+
+
+def test_ranked_decisions_log_the_iteration_rank_and_score(tmp_path, monkeypatch, settings):
+  monkeypatch.setattr(common, "LOG_DIR", tmp_path)
+  settings = dataclasses.replace(settings, seed_set_size=1)
+
+  workspace = screening.Workspace(
+    settings=settings, pool=_pool(), order=list(_pool().index), key_ids=set(), key_total=0,
+    decisions={"pubmed:0": {"label": "include"}},
+    ranking=_ranking(["pubmed:3", "pubmed:1"]),
+  )
+
+  event = workspace.decide("pubmed:1", "maybe")
+
+  assert (event["queue"], event["ranker_iteration"], event["rank"]) == ("ranker", 1, 2)
+  assert event["score"] == 0.9

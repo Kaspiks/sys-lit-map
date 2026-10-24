@@ -14,8 +14,29 @@ def test_structured_abstracts_are_split_at_their_labels():
   assert sections == [("Background", "Why."), ("Methods", "How, p<0.05.")]
 
 
+class FakeRanker:
+  """Stands in for rank.retrain_if_due: counts calls and can fail on demand."""
+
+  def __init__(self):
+    self.calls = 0
+    self.error = None
+
+  def __call__(self):
+    self.calls += 1
+
+    if self.error:
+      raise self.error
+
+    return False
+
+
 @pytest.fixture
-def client(tmp_path, monkeypatch, settings):
+def ranker():
+  return FakeRanker()
+
+
+@pytest.fixture
+def client(tmp_path, monkeypatch, settings, ranker):
   monkeypatch.setattr(common, "LOG_DIR", tmp_path)
 
   pool = pd.DataFrame({
@@ -35,7 +56,11 @@ def client(tmp_path, monkeypatch, settings):
 
     return screening.Workspace.load(settings=settings, search_cfg={}, pool=pool, events=events)
 
-  app = create_app(load_workspace=load_workspace, load_search_config=lambda: {"concepts": CONCEPTS})
+  app = create_app(
+    load_workspace=load_workspace,
+    load_search_config=lambda: {"concepts": CONCEPTS},
+    retrain=ranker,
+  )
 
   return app.test_client()
 
@@ -71,3 +96,21 @@ def test_invalid_decisions_get_400(client):
 
   assert response.status_code == 400
   assert "reason" in response.get_json()["error"]
+
+
+def test_each_decision_gives_the_ranker_a_chance_to_retrain(client, ranker):
+  first = client.get("/api/state").get_json()["record"]["record_id"]
+
+  client.post("/api/decisions", json={"record_id": first, "label": "include"})
+
+  assert ranker.calls == 1
+
+
+def test_a_failing_ranker_never_loses_the_decision(client, ranker):
+  ranker.error = RuntimeError("model crashed")
+  first = client.get("/api/state").get_json()["record"]["record_id"]
+
+  response = client.post("/api/decisions", json={"record_id": first, "label": "include"})
+
+  assert response.status_code == 200
+  assert response.get_json()["progress"]["screened"] == 1

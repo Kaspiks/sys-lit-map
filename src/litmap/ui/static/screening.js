@@ -26,6 +26,12 @@ async function start() {
 
 function render(state) {
   const recordChanged = state.record?.record_id !== view.state?.record?.record_id;
+  const retrained = view.state && state.progress.ranker_iteration !== view.state.progress.ranker_iteration;
+
+  if (retrained) {
+    const iteration = state.progress.ranker_iteration;
+    showToast(`Ranker retrained (iteration ${iteration}): what follows is in its new order`);
+  }
 
   view.state = state;
   view.blockIndex = Object.fromEntries(state.legend.map((entry, index) => [entry.block, index]));
@@ -159,9 +165,22 @@ function renderStats(progress) {
     stat("Irrelevant in a row", progress.irrelevant_in_a_row, progress.stop_after, "Stopping rule, part 1"),
     stat("Key studies found", progress.key_studies_found, progress.key_studies_total,
       "Part 2. Which ones stays hidden"),
-    stat("Seed set", progress.seed_set_screened, progress.seed_set_size, "Random order, trains the ranker"),
+    progress.seed_set_done
+      ? stat("Ranker", rankerValue(progress), null, retrainNote(progress))
+      : stat("Seed set", progress.seed_set_screened, progress.seed_set_size,
+        "Random order, trains the ranker"),
     stat("Seconds per record", progress.average_seconds ?? "–", null, "Average so far"),
   );
+}
+
+function rankerValue(progress) {
+  return progress.ranker_iteration ? `Iteration ${progress.ranker_iteration}` : "Not trained yet";
+}
+
+function retrainNote(progress) {
+  if (progress.retrain_in === 0) return "Retrains after your next decision";
+
+  return `Retrains in ${progress.retrain_in} decisions`;
 }
 
 function stat(label, value, total, note) {

@@ -5,13 +5,15 @@ state is rebuilt by replaying those events, so the log is the only source of tru
 ranker, the PRISMA report and replay.py all read the same events.
 
 Records come from the rule pre-filter: rows of data/interim/prefiltered.parquet with an
-empty excluded_by. Until the ranker exists they are shown in a fixed random order, because
-the seed set's labels will train the ranker and must not be biased by any ranking.
+empty excluded_by. The seed set comes first, in a fixed random order, because its labels
+train the ranker and must not be biased by any ranking. After it, the latest ranker
+iteration (rank.py) decides the order, and the ranker retrains after every batch of decisions.
 """
 
 import random
 import uuid
 from dataclasses import dataclass
+from typing import NamedTuple
 
 import pandas as pd
 
@@ -21,7 +23,20 @@ from litmap.config import load_config, load_screening_settings
 STAGE = "title_abstract"
 LABELS = ("include", "maybe", "exclude")
 RELEVANT_LABELS = ("include", "maybe")
-QUEUE = "random_seed_set"  # which ordering showed the record; the ranker will log its own
+DEFAULT_BATCH_SIZE = 25
+
+SEED_SET_QUEUE = "random_seed_set"
+RANKED_QUEUE = "ranker"
+UNRANKED_QUEUE = "random"
+
+
+class Ranking(NamedTuple):
+  """The latest ranker iteration, as the screening order uses it."""
+
+  iteration: int
+  trained_on: int  # decisions in its training set
+  order: list  # record ids, most likely relevant first
+  scores: dict  # record id -> score; logged with each decision, never shown
 
 
 class DecisionError(ValueError):
@@ -42,6 +57,7 @@ class Workspace:
   key_ids: set  # validation studies in the pool; never shown as such, only counted
   key_total: int
   decisions: dict  # record_id -> decision still in force, oldest first
+  ranking: Ranking | None = None
 
   @classmethod
   def load(cls, settings=None, search_cfg=None, pool=None, events=None):
@@ -51,14 +67,17 @@ class Workspace:
     events = common.read_log("screening") if events is None else events
     validation = search_cfg.get("validation") or []
     key_ids = validation_record_ids(pool, validation)
+    ranking = latest_ranking(events)
+    random_order = queue_order(pool.index, key_ids, settings.seed, settings.seed_set_size)
 
     return cls(
       settings=settings,
       pool=pool,
-      order=queue_order(pool.index, key_ids, settings.seed, settings.seed_set_size),
+      order=screening_order(random_order, settings.seed_set_size, ranking),
       key_ids=key_ids,
       key_total=len(validation),
       decisions=replay_decisions(events, settings.screener),
+      ranking=ranking,
     )
 
   def next_record_id(self):
@@ -83,9 +102,20 @@ class Workspace:
       "key_studies_in_pool": len(self.key_ids),
       "seed_set_screened": sum(record_id in self.decisions for record_id in seed_set),
       "seed_set_size": len(seed_set),
+      "seed_set_done": self.seed_set_done(),
+      "ranker_iteration": self.ranking.iteration if self.ranking else None,
+      "retrain_in": self._retrain_in(),
       "average_seconds": round(sum(seconds) / len(seconds)) if seconds else None,
       "stopping_rule_met": in_a_row >= self.settings.stop_after_irrelevant and key_found == self.key_total,
     }
+
+  def seed_set_done(self):
+    return all(record_id in self.decisions for record_id in self.order[:self.settings.seed_set_size])
+
+  def ranker_due(self):
+    """True when the ranker should retrain: the seed set is done and a batch of new decisions is in."""
+
+    return self._retrain_in() == 0
 
   def recent(self, count=5):
     """The latest decisions still in force, newest first."""
@@ -109,7 +139,7 @@ class Workspace:
       "reason": reason if label == "exclude" else None,
       "note": note or None,
       "screener": self.settings.screener,
-      "queue": QUEUE,
+      **self._queue_details(record_id),
       "queue_position": self.order.index(record_id) + 1,
       "seconds_on_record": seconds,
       "timestamp": common.now(),
@@ -144,6 +174,34 @@ class Workspace:
 
   def _label_of(self, record_id):
     return self.decisions.get(record_id, {}).get("label")
+
+  def _retrain_in(self):
+    """Decisions until the ranker retrains (0 = due now), or None during the seed set."""
+
+    if not self.seed_set_done():
+      return None
+
+    if self.ranking is None:
+      return 0
+
+    batch_size = self.settings.ranker.get("batch_size", DEFAULT_BATCH_SIZE)
+    new_decisions = len(self.decisions) - self.ranking.trained_on
+
+    return max(0, batch_size - new_decisions)
+
+  def _queue_details(self, record_id):
+    if record_id in self.order[:self.settings.seed_set_size]:
+      return {"queue": SEED_SET_QUEUE}
+
+    if self.ranking is None or record_id not in self.ranking.scores:
+      return {"queue": UNRANKED_QUEUE}
+
+    return {
+      "queue": RANKED_QUEUE,
+      "ranker_iteration": self.ranking.iteration,
+      "rank": self.ranking.order.index(record_id) + 1,
+      "score": round(float(self.ranking.scores[record_id]), 6),
+    }
 
 
 def load_pool():
@@ -198,6 +256,41 @@ def queue_order(record_ids, key_ids, seed, seed_set_size):
     order.insert(rng.randint(0, seed_set_end), key_id)
 
   return order
+
+
+def latest_ranking(events):
+  rank_events = [event for event in events if event.get("event") == "rank"]
+
+  if not rank_events:
+    return None
+
+  event = rank_events[-1]
+  ranking = pd.read_parquet(common.ROOT / event["ranking_file"])
+
+  return Ranking(
+    iteration=event["iteration"],
+    trained_on=len(event["training"]),
+    order=list(ranking["record_id"]),
+    scores=dict(zip(ranking["record_id"], ranking["score"])),
+  )
+
+
+def screening_order(random_order, seed_set_size, ranking):
+  """The seed set in its random order, then the other records by the latest ranking.
+
+  Records the ranking doesn't cover (there is no ranking yet, or it predates them) follow
+  in their random order.
+  """
+
+  if ranking is None:
+    return random_order
+
+  seed_set, rest = random_order[:seed_set_size], random_order[seed_set_size:]
+  remaining = set(rest)
+  ranked = [record_id for record_id in ranking.order if record_id in remaining]
+  ranked_set = set(ranked)
+
+  return seed_set + ranked + [record_id for record_id in rest if record_id not in ranked_set]
 
 
 def validation_record_ids(pool, validation):

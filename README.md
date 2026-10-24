@@ -126,6 +126,20 @@ docker exec -it litmap ipython
   `requirements.txt`, then run `docker exec litmap pip install -r requirements.txt`, then
   `docker exec litmap pip freeze > requirements.lock.txt`, then `docker compose up -d --build`.
 
+### Ranker
+
+After the 100-record seed set, the screening page orders the remaining records by the latest
+ranker iteration, and retrains it after every 25 new decisions (`ranker.batch_size`). It needs
+no attention while you screen; scores are logged with each decision but never shown.
+
+- `model` in `config/screening.yaml` switches between `random_forest` and `logistic_regression`;
+  `features` picks the feature groups (`words`, `concepts`, `metadata`) for the ablation.
+- `python -m litmap.rank` runs one iteration by hand and prints the top records with scores.
+- `python -m litmap.rank --replay` rebuilds every logged iteration from the log and checks that it
+  gives the same ranking (`--replay 3` for one iteration).
+- Each iteration saves its model in `models/`, its ranking in `data/interim/rankings/`, and a
+  `rank` line in `logs/screening.jsonl` with the training set, settings, concept terms and hashes.
+
 ### Debugging in VS Code
 
 Code runs in the container, but you can set breakpoints in VS Code on the Mac and step through it:

@@ -1,19 +1,20 @@
 .env
+.env.*
+!.env.example
+.venv/
 __pycache__/
 .ipynb_checkpoints/
 .pytest_cache/
 .DS_Store
 
-# Pipeline artefacts (keep folder structure, not the contents)
+# Pipeline artefacts (keep folder structure, not the contents). logs/ is tracked: it holds
+# the screening decisions and the evidence for every stage.
 data/**
 !data/**/
 !data/**/.gitkeep
 outputs/**
 !outputs/**/
 !outputs/**/.gitkeep
-logs/**
-!logs/**/
-!logs/**/.gitkeep
 
 # ASReview downloads a benchmark-dataset cache here when it is first imported
 synergy_cache.sqlite

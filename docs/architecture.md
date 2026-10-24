@@ -80,7 +80,7 @@ Every result can be traced back to a logged query or a logged human decision, an
 - Embedding model version, if used
 - SHA-256 hash of each input file, recorded in the log
 
-`replay.py` re-runs screening from the logged decisions with the same seed and checks that every ranking is identical.
+`python -m litmap.rank --replay` rebuilds every logged ranker iteration from its logged training set, settings, concept terms and seed, and checks that every ranking is identical; it refuses when the screening pool's SHA-256 no longer matches the logged one.
 
 ## Evaluation plan
 

@@ -5,15 +5,18 @@ most likely relevant first. Planned (docs/architecture.md): a random forest on T
 and abstract plus metadata features, compared against logistic regression, retrained after
 each batch of decisions.
 
-The plumbing is done: loading the labels from the log, refusing to train on too few, a
-reproducible ranking order, and saving and logging each iteration for replay.py.
-The functions marked TODO are yours: train and score.
+After the seed set, the screening server calls retrain_if_due() after every decision, so a
+new iteration runs after each batch (ranker.batch_size in screening.yaml) and decides the order
+of the records still to screen. Every iteration is saved and logged with everything replay()
+needs to rebuild it.
 
-Run one iteration:  python -m litmap.rank
-Step through it:    debug -m litmap.rank, then in VS Code: Run and Debug -> "Attach to container"
+Run one iteration:        python -m litmap.rank
+Replay logged iterations: python -m litmap.rank --replay      (or --replay 3 for one)
+Step through it:          debug -m litmap.rank, then in VS Code: Run and Debug -> "Attach to container"
 Scores are for you and the evaluation only; the screening screen never shows them.
 """
 
+import argparse
 import re
 from typing import NamedTuple
 
@@ -21,8 +24,9 @@ import joblib
 import numpy as np
 import pandas as pd
 from scipy import sparse
-from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.linear_model import LogisticRegression
 
 from litmap import common, dedup, screening
 from litmap.concepts import ConceptTerms
@@ -31,6 +35,7 @@ from litmap.config import load_config, load_screening_settings
 RELEVANT = 1  # include or maybe: a "maybe" still has to be read in full, so the ranker should find them
 IRRELEVANT = 0
 DEFAULT_MIN_LABELS = {"relevant": 5, "irrelevant": 5}
+DEFAULT_MODEL = "random_forest"
 TOP_TO_PRINT = 10
 
 # record types from every database's vocabulary; the first pattern that matches wins
@@ -58,22 +63,35 @@ class Features(NamedTuple):
   names: list  # one name per column, e.g. "word:cadence", "concept:outcome_in_title"
 
 
-def main():
-  """One ranker iteration. Returns the ranking, or None while there are too few labels."""
-  settings = load_screening_settings()
-  workspace = screening.Workspace.load(settings=settings)
-  labelled, unlabelled = split_by_label(workspace)
+def main(settings=None, concepts=None, verbose=True):
+  """One ranker iteration. Returns the ranking, or None while there are too few labels.
+  """
+
+  settings = settings or load_screening_settings()
+  concepts = concepts or load_config()["concepts"]
+  labelled, unlabelled = split_by_label(screening.Workspace.load(settings=settings))
 
   if not enough_labels(labelled, settings.ranker):
     return None
 
-  features = build_features(labelled, unlabelled, settings.ranker, load_config()["concepts"])
+  features = build_features(labelled, unlabelled, settings.ranker, concepts)
   model = train(features.labelled, labelled["label"], settings.ranker, seed=settings.seed)
   ranking = rank(unlabelled, score(model, features.unlabelled))
-  save_iteration(model, ranking, labelled, settings)
-  print_top(ranking)
+  save_iteration(model, ranking, labelled, settings, concepts)
+
+  if verbose:
+    print_top(ranking)
 
   return ranking
+
+
+def retrain_if_due():
+  """Run an iteration when screening needs one (see Workspace.ranker_due). True if it ran."""
+
+  if not screening.Workspace.load().ranker_due():
+    return False
+
+  return main(verbose=False) is not None
 
 
 def split_by_label(workspace):
@@ -227,28 +245,48 @@ def _tfidf_options(ranker_settings):
 
 
 def train(features, labels, ranker_settings, seed):
-  """TODO: fit a model on the labelled features and return it.
+  """Fit the model named in ranker_settings["model"] (random forest by default) and return it.
 
-  The plan's model is sklearn.ensemble.RandomForestClassifier, with n_estimators and
-  class_weight from ranker_settings, compared against sklearn.linear_model.LogisticRegression.
-  Pass random_state=seed: without it the ranking changes on every run and can't be replayed.
+  logistic_regression is the comparison from the plan. random_state=seed makes the same
+  decisions always give the same ranking, which is what replay() checks.
   """
 
-  model = RandomForestClassifier(
+  model_name = ranker_settings.get("model", DEFAULT_MODEL)
+
+  if model_name not in MODELS:
+    raise ValueError(f"Unknown model {model_name!r}; choose from {list(MODELS)}")
+
+  model = MODELS[model_name](ranker_settings, seed)
+  model.fit(features, labels.astype(int))
+
+  return model
+
+
+def score(model, features):
+  """The probability of being relevant, one per record."""
+  relevant_column = list(model.classes_).index(RELEVANT)
+
+  return model.predict_proba(features)[:, relevant_column]
+
+
+def random_forest(ranker_settings, seed):
+  return RandomForestClassifier(
     n_estimators=ranker_settings.get("n_estimators", 100),
     class_weight=ranker_settings.get("class_weight", "balanced"),
     random_state=seed,
   )
 
-  model.fit(features, labels)
 
-  return model
+def logistic_regression(ranker_settings, seed):
+  return LogisticRegression(
+    class_weight=ranker_settings.get("class_weight", "balanced"),
+    max_iter=1000,
+    random_state=seed,
+  )
 
-def score(model, features):
-  """TODO: one number per record, higher meaning more likely relevant (e.g. from predict_proba)."""
-  scores = model.predict_proba(features)[:, 1]
 
-  return scores
+MODELS = {"random_forest": random_forest, "logistic_regression": logistic_regression}
+
 
 def rank(unlabelled, scores):
   """Records not screened yet, most likely relevant first.
@@ -261,12 +299,13 @@ def rank(unlabelled, scores):
   return ranking.sort_values(["score", "record_id"], ascending=[False, True], ignore_index=True)
 
 
-def save_iteration(model, ranking, labelled, settings):
-  """Save this iteration's model and ranking, and log them with the training set, for replay.py."""
-  iteration = 1 + sum(event.get("event") == "rank" for event in common.read_log("screening"))
+def save_iteration(model, ranking, labelled, settings, concepts):
+  """Save this iteration's model and ranking, and log everything replay() needs. Returns its number."""
+  iteration = 1 + len(_rank_events())
   name = f"iteration_{iteration:03d}"
   model_path = common.MODELS_DIR / f"{name}.joblib"
   ranking_path = common.INTERIM_DIR / "rankings" / f"{name}.parquet"
+  pool_path = common.INTERIM_DIR / "prefiltered.parquet"
 
   for path in (model_path, ranking_path):
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -280,6 +319,9 @@ def save_iteration(model, ranking, labelled, settings):
     "timestamp": common.now(),
     "seed": settings.seed,
     "ranker": settings.ranker,
+    "concepts": concepts,
+    "pool_file": common.relative(pool_path),
+    "pool_sha256": common.sha256(pool_path),
     "training": [[record_id, int(label)] for record_id, label in labelled["label"].items()],
     "model_file": common.relative(model_path),
     "model_sha256": common.sha256(model_path),
@@ -289,6 +331,39 @@ def save_iteration(model, ranking, labelled, settings):
 
   print(f"Iteration {iteration}: trained on {len(labelled)} decisions, ranked {len(ranking)} records")
 
+  return iteration
+
+
+def replay(iteration):
+  """Rebuild a logged iteration from its logged inputs. True if it gives the same ranking.
+
+  Raises ValueError when it can't be replayed: logged before replay information was kept,
+  or the screening pool changed since.
+  """
+
+  event = _rank_event(iteration)
+
+  if "pool_sha256" not in event:
+    raise ValueError(f"iteration {iteration} was logged before replay information was kept")
+
+  if common.sha256(common.ROOT / event["pool_file"]) != event["pool_sha256"]:
+    raise ValueError(f"{event['pool_file']} has changed since iteration {iteration}")
+
+  pool = screening.load_pool()
+  labels = dict(event["training"])
+  is_labelled = pool.index.isin(list(labels))
+  labelled = pool[is_labelled].assign(label=pd.Series(labels, dtype="Int64"))
+  unlabelled = pool[~is_labelled]
+
+  features = build_features(labelled, unlabelled, event["ranker"], event["concepts"])
+  model = train(features.labelled, labelled["label"], event["ranker"], seed=event["seed"])
+  replayed = rank(unlabelled, score(model, features.unlabelled))
+  saved = pd.read_parquet(common.ROOT / event["ranking_file"])
+
+  same_order = list(replayed["record_id"]) == list(saved["record_id"])
+
+  return same_order and np.allclose(replayed["score"], saved["score"])
+
 
 def print_top(ranking, count=TOP_TO_PRINT):
   """The highest-scored records, to check the ranker while you develop it."""
@@ -297,5 +372,49 @@ def print_top(ranking, count=TOP_TO_PRINT):
     print(f"{position + 1:>3}. {row['score']:.3f}  {str(row['title'])[:90]}")
 
 
+def _rank_events():
+  return [event for event in common.read_log("screening") if event.get("event") == "rank"]
+
+
+def _rank_event(iteration):
+  matching = [event for event in _rank_events() if event["iteration"] == iteration]
+
+  if not matching:
+    raise ValueError(f"No iteration {iteration} in logs/screening.jsonl")
+
+  return matching[-1]
+
+
+def _replay_report(iteration):
+  try:
+    reproduced = replay(iteration)
+  except ValueError as error:
+    return f"iteration {iteration}: can't replay ({error})"
+
+  return f"iteration {iteration}: {'reproduced exactly' if reproduced else 'DIFFERENT ranking'}"
+
+
+def _command_line():
+  parser = argparse.ArgumentParser(description="Run one ranker iteration, or replay logged ones.")
+
+  parser.add_argument("--replay", nargs="?", const="all", metavar="ITERATION",
+                      help="rebuild logged iterations (all, or one number) and check their rankings")
+
+  arguments = parser.parse_args()
+
+  if arguments.replay is None:
+    main()
+
+    return
+
+  if arguments.replay == "all":
+    iterations = [event["iteration"] for event in _rank_events()]
+  else:
+    iterations = [int(arguments.replay)]
+
+  for iteration in iterations:
+    print(_replay_report(iteration))
+
+
 if __name__ == "__main__":
-  main()
+  _command_line()
