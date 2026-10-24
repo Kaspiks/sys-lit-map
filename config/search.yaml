@@ -1,0 +1,57 @@
+question: >
+  In studies of healthy adults running to music or a metronome, which participant
+  characteristics have been examined as moderators of cadence entrainment or
+  synchronisation, and how is running experience reported?
+
+# Crossref is not a search source: it ignores AND/OR and ranks by relevance.
+# It is used in stage 2 (dedup) to look up missing DOIs instead.
+sources: [europepmc, pubmed, openalex]
+
+# Where the terms must appear (Europe PMC, OpenAlex): title_abstract | title | all
+# "all" also searches full text, which multiplies hits with mostly irrelevant ones.
+# PubMed never searches full text, so it ignores this.
+search_in: title_abstract
+
+concepts:
+  population:
+    - "running"
+    - "runner*"
+    - "jogging"
+    # not "treadmill": it only added walking/gait-rehab studies, never running ones
+  exposure:
+    - "music*"
+    - "metronome*"
+    - '"auditory cue"'
+    - '"auditory cues"'
+    - '"auditory cueing"'
+    - '"auditory cuing"'
+    - '"auditory pacing"'
+    - '"auditory stimulus"'
+    - '"auditory stimuli"'
+    - '"auditory stimulation"'
+    - '"rhythmic auditory stimulation"'
+    - "tempo"
+  outcome:
+    - "cadence"
+    - '"step frequency"'
+    - '"step rate"'
+    - '"stride frequency"'
+    - '"stride rate"'
+    - "synchroni*"
+    - "entrain*"
+    - '"auditory-motor coupling"'                                 # TODO
+
+filters:
+  year_from: 1990
+  year_to: 2025
+  languages: [en, ru]
+
+# Known key studies the search must retrieve (stage-1 "done" test, logged on every run).
+# Matched by DOI or PMID, never by author + year: databases disagree on years.
+# TODO: add the "others" from the protocol's validation set.
+validation:
+  - {label: "Van Dyck 2015", doi: "10.1186/s40798-015-0025-9", pmid: "26258007"}
+  - {label: "Van Dyck 2021", doi: "10.1111/nyas.14528", pmid: "33210323"}
+  - {label: "Bood 2013", doi: "10.1371/journal.pone.0070758", pmid: "23951000"}
+  - {label: "Nijs 2020", doi: "10.3390/brainsci10050273", pmid: "32370091"}
+  - {label: "Buhmann 2018", doi: "10.1371/journal.pone.0208702", pmid: "30521634"}

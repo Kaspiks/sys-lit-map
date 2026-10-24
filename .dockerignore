@@ -1,0 +1,9 @@
+.git
+.env
+data/
+outputs/
+logs/
+notebooks/
+**/__pycache__
+**/.ipynb_checkpoints
+.pytest_cache

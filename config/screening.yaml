@@ -1,0 +1,24 @@
+# Logged decisions store the reason *code*: reword a label freely, but never change or reuse a code.
+
+screener: KM  #
+
+seed: 2026  # fixes the random order of the seed set (and later every random sample)
+seed_set_size: 100  # records screened in random order before the ranker takes over
+
+stopping_rule:
+  irrelevant_in_a_row: 100
+
+exclusion_reasons:
+  - {code: not_running, label: "Not running (walking, cycling, other sports)"}
+  - {code: no_auditory_pacing, label: "No music or metronome used as pacing"}
+  - {code: wrong_outcome, label: "Outcome not cadence, step frequency or synchronisation"}
+  - {code: wrong_population, label: "Clinical population, children or animals"}
+  - {code: not_empirical, label: "Review, opinion or protocol"}
+  - {code: other, label: "Other", note_required: true}
+
+ranker:
+  min_labels: {relevant: 5, irrelevant: 5}
+  features: [words, concepts, metadata]
+  n_estimators: 500
+  class_weight: balanced
+  tfidf: {ngram_range: [1, 2], min_df: 2}

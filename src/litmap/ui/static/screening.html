@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Screening · litmap</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script type="module" src="/static/screening.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <span class="brand">litmap</span>
+    <nav>
+      <a href="/" aria-current="page">Screening</a>
+      <a href="/trail" id="trail-link">Record trail</a>
+    </nav>
+    <span class="screener">Screener <strong id="screener"></strong></span>
+  </header>
+
+  <section class="stats" id="stats" aria-label="Progress"></section>
+  <div id="banners"></div>
+
+  <main class="workspace">
+    <article class="card record" id="record" aria-live="polite"></article>
+
+    <aside class="side">
+      <section class="card panel">
+        <h2>Highlighted terms</h2>
+        <div id="legend"></div>
+      </section>
+
+      <section class="card panel">
+        <h2>Recent decisions</h2>
+        <ol class="recent" id="recent"></ol>
+      </section>
+
+      <section class="card panel">
+        <h2>Exclusion reasons</h2>
+        <ol class="reason-key" id="reason-key"></ol>
+      </section>
+    </aside>
+  </main>
+
+  <footer class="actions" id="actions" aria-label="Decision"></footer>
+  <p class="toast" id="toast" role="status" hidden></p>
+</body>
+</html>

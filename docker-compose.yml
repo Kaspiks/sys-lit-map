@@ -1,0 +1,18 @@
+services:
+  litmap:
+    build: .
+    image: sys-lit-map:dev
+    container_name: litmap
+    working_dir: /workspace
+    volumes:
+      - ./:/workspace          # live-edit code on the Mac, run it in the container
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      - "5050:5000"            # ASReview LAB web UI (asreview lab --host 0.0.0.0)
+      - "127.0.0.1:8000:8000"  # screening UI (python -m litmap.ui); only this Mac can reach it
+      - "127.0.0.1:5678:5678"  # VS Code debugger (debugpy)
+    stdin_open: true
+    tty: true
+    restart: unless-stopped

@@ -1,0 +1,20 @@
+export PS1='\[\e[1;32m\]litmap\[\e[0m\]:\w\$ '
+alias ll='ls -lah'
+alias check='python /workspace/scripts/check_env.py'
+# debug -m litmap.rank: run a module and wait for VS Code to attach (Run and Debug -> "Attach to container")
+alias debug='python -m debugpy --listen 0.0.0.0:5678 --wait-for-client'
+
+# undebug: force-stop a debug run that won't exit, which frees port 5678 for the next `debug`
+undebug() {
+  local process stopped=0
+
+  for process in /proc/[0-9]*; do
+    if tr '\0' ' ' < "$process/cmdline" 2>/dev/null | grep -qE '(-m debugpy|debugpy/adapter)'; then
+      kill -9 "${process#/proc/}" 2>/dev/null && stopped=$((stopped + 1))
+    fi
+  done
+
+  echo "stopped $stopped debug process(es); port 5678 is free"
+}
+cd /workspace
+echo "litmap container: 'ipython' to start, 'check' to test packages + APIs"
