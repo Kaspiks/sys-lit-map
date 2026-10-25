@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PRISMA flow · litmap</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script type="module" src="/static/prisma.js"></script>
+</head>
+<body>
+  <div class="app">
+    <nav class="sidebar" id="sidebar" aria-label="Pages"></nav>
+
+    <div class="page">
+      <header class="page-header" id="header"></header>
+
+      <main class="report">
+        <section class="card panel report-actions">
+          <div>
+            <h2>Report files</h2>
+            <p class="panel-note">Every number comes from the logs. Generating writes the flow diagram,
+              prisma_counts.json, the figures and the PRISMA-S search report to outputs/, and logs each
+              file's SHA-256 in logs/report.jsonl.</p>
+            <ul class="written" id="written"></ul>
+          </div>
+          <button type="button" id="build">Generate report files</button>
+        </section>
+        <figure class="card figure flow" id="flow"></figure>
+        <div class="figure-grid" id="figures"></div>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

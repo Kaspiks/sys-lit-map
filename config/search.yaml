@@ -43,7 +43,7 @@ concepts:
 
 filters:
   year_from: 1990
-  year_to: 2025
+  year_to: 2026
   languages: [en, ru]
 
 # Known key studies the search must retrieve (stage-1 "done" test, logged on every run).

@@ -162,3 +162,32 @@ def test_ranked_decisions_log_the_iteration_rank_and_score(tmp_path, monkeypatch
 
   assert (event["queue"], event["ranker_iteration"], event["rank"]) == ("ranker", 1, 2)
   assert event["score"] == 0.9
+
+
+def test_a_second_screener_screens_a_fixed_blind_sample(tmp_path, monkeypatch, settings):
+  monkeypatch.setattr(common, "LOG_DIR", tmp_path)
+  settings = dataclasses.replace(settings, second_sample_size=3)
+  events = [_decision("a", "pubmed:0", "include")]  # KM's decision: the second screener never sees it
+
+  def load():
+    return screening.Workspace.load(
+      settings=settings, search_cfg=SEARCH_CONFIG, pool=_pool(), events=events, screener="XY",
+    )
+
+  second = load()
+  event = second.decide(second.next_record_id(), "include")
+
+  assert second.blind and len(second.order) == 3
+  assert second.order == load().order
+  assert second.decisions == {event["record_id"]: event}
+  assert (event["screener"], event["queue"]) == ("XY", screening.SECOND_SCREENER_QUEUE)
+
+
+def test_the_feed_numbers_decisions_and_undos_newest_first(workspace):
+  first = workspace.next_record_id()
+  workspace.decide(first, "include")
+  workspace.undo_last()
+
+  feed = workspace.feed()
+
+  assert [(item["number"], item["event"]) for item in feed] == [(2, "undo"), (1, "decision")]

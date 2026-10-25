@@ -118,8 +118,15 @@ def _parse_work(work):
     "journal": journal.get("display_name"),
     "authors": ", ".join(name for name in authors if name),
     "language": work.get("language"),
-    "pub_types": work.get("type"),
+    "pub_types": _pub_types(work.get("type"), journal.get("type")),
   }
+
+
+def _pub_types(work_type, source_type):
+  """The work's type, plus 'repository' when its main copy is in one (years.py checks those years)."""
+  types = [work_type, "repository" if source_type == "repository" else None]
+
+  return "; ".join(name for name in types if name) or None
 
 
 def _rebuild_abstract(inverted_index):

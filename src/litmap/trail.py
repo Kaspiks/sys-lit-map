@@ -2,24 +2,36 @@
 
 Read-only. It shows that every result traces back to a logged query or a logged decision,
 and whether the files the logs fingerprint are still unchanged.
+
+Run: python -m litmap.trail pubmed:26258007   (a record id, a merged record's id, a DOI or a PMID)
 """
+
+import argparse
+import json
 
 import pandas as pd
 
-from litmap import common, dedup
+from litmap import common, dedup, rules
 
-RECORD_FIELDS = ["title", "journal", "year", "doi", "pmid", "pub_types", "databases", "excluded_by"]
+RECORD_FIELDS = [
+  "title", "journal", "year", "year_reported", "year_flag", "doi", "pmid", "pub_types", "databases",
+  "excluded_by",
+]
 
 
 def find_record_id(query):
-  """A record id from a record id, DOI or PMID (None if nothing matches)."""
+  """A record id from a record id, the id of a record merged into it, a DOI or a PMID (None if none)."""
   flagged = _flagged_records()
   query = query.strip()
 
   if query in flagged.index:
     return query
 
-  matches = flagged.index[(flagged["doi"] == query.lower()) | (flagged["pmid"] == query)]
+  members = flagged["member_ids"].str.split(dedup.MEMBER_SEPARATOR)
+
+  matches = flagged.index[
+    (flagged["doi"] == query.lower()) | (flagged["pmid"] == query) | members.map(lambda ids: query in ids)
+  ]
 
   return matches[0] if len(matches) else None
 
@@ -37,11 +49,15 @@ def record_trail(record_id):
 
   return {
     "record_id": record_id,
-    "record": {field: common.plain(record[field]) for field in RECORD_FIELDS},
+    "record": {field: common.plain(record.get(field)) for field in RECORD_FIELDS},  # older runs lack some
     "search": [_found_by(member, searches, chased) for member in members],
     "dedup": _dedup_section(record, members, dedup_summary),
     "rules": _rules_section(record, rule_summary),
-    "screening": [event for event in screening_events if event.get("record_id") == record_id],
+    "screening": [
+      {"line": line, **event}
+      for line, event in enumerate(screening_events, start=1)
+      if event.get("record_id") == record_id
+    ],
     "files": _file_checks(searches.values(), dedup_summary, rule_summary),
   }
 
@@ -109,20 +125,38 @@ def _found_by(member_id, searches, chased):
   }
 
 
-def _dedup_section(record, members, dedup_summary):
-  merges = [
-    event for event in common.read_log("dedup")
-    if event.get("event") == "merge"
-    and event["dedup_run"] == dedup_summary["dedup_run"]
-    and (event["record_a"] in members or event["record_b"] in members)
+def merges(dedup_run=None):
+  """Every join of a deduplication run (default: the latest): which rule linked which two records."""
+  dedup_run = dedup_run or _latest(common.read_log("dedup"), "summary")["dedup_run"]
+
+  return [
+    {key: event[key] for key in ("rule", "value", "record_a", "record_b")}
+    for event in common.read_log("dedup")
+    if event.get("event") == "merge" and event["dedup_run"] == dedup_run
   ]
 
+
+def _dedup_section(record, members, dedup_summary):
   return {
     "dedup_run": dedup_summary["dedup_run"],
     "members": members,
-    "merges": [{key: merge[key] for key in ("rule", "value", "record_a", "record_b")} for merge in merges],
+    "merges": [
+      merge for merge in merges(dedup_summary["dedup_run"])
+      if merge["record_a"] in members or merge["record_b"] in members
+    ],
     "field_sources": _field_sources(record, members, dedup_summary) if len(members) > 1 else {},
+    "year_check": _year_check(record.name, dedup_summary["dedup_run"]),
   }
+
+
+def _year_check(record_id, dedup_run):
+  """What years.py logged about this record's year in this dedup run, or None if it wasn't flagged."""
+
+  checks = [event for event in common.read_log("dedup") if event.get("event") == "year_check"]
+
+  return next((
+    check for check in checks if check["dedup_run"] == dedup_run and check["record_id"] == record_id
+  ), None)
 
 
 def _field_sources(record, members, dedup_summary):
@@ -152,11 +186,18 @@ def _same_value(field, value, merged_value):
 
 
 def _rules_section(record, rule_summary):
+  descriptions = {rule.rule_name: rule.__doc__.splitlines()[0] for rule in rules.RULES}
+
   return {
     "rules_run": rule_summary["rules_run"],
     "excluded_by": common.plain(record["excluded_by"]),
     "rules": [
-      {"rule": name, "version": version, "fired": bool(record[f"rule_{name}"])}
+      {
+        "rule": name,
+        "version": version,
+        "description": descriptions.get(name),
+        "fired": bool(record[f"rule_{name}"]),
+      }
       for name, version in rule_summary["rules"].items()
     ],
   }
@@ -196,3 +237,18 @@ def _check_file(path, logged_sha256):
     status = "changed"
 
   return {"file": path, "sha256": logged_sha256, "status": status}
+
+
+def _command_line():
+  parser = argparse.ArgumentParser(description="Print everything the logs say about one record.")
+  parser.add_argument("query", help="a record id, the id of a record merged into it, a DOI or a PMID")
+  record_id = find_record_id(parser.parse_args().query)
+
+  if record_id is None:
+    raise SystemExit("No record with that id, DOI or PMID.")
+
+  print(json.dumps(record_trail(record_id), indent=2, ensure_ascii=False, default=str))
+
+
+if __name__ == "__main__":
+  _command_line()

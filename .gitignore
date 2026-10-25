@@ -12,6 +12,8 @@ __pycache__/
 data/**
 !data/**/
 !data/**/.gitkeep
+!data/processed/extraction.xlsx
+!data/processed/extraction.csv
 outputs/**
 !outputs/**/
 !outputs/**/.gitkeep

@@ -11,8 +11,10 @@ numbers in both titles ("Part 1" is not "Part 2").
 
 The input is a search run's records.csv plus every citation-chasing round (chase.py), so
 chased works merge with the ones the search found. Each group becomes one row with the richest
-metadata, and every join is logged to logs/dedup.jsonl. Output: data/interim/records.parquet
-(and a .csv copy).
+metadata, and every join is logged to logs/dedup.jsonl. Then years.py flags dissertations and
+repository items whose year is probably a re-registration date, and corrects the ones related
+works date (year_reported and year_flag columns, year_check events in the log).
+Output: data/interim/records.parquet (and a .csv copy).
 """
 
 import re
@@ -22,7 +24,7 @@ import pandas as pd
 from rapidfuzz import fuzz, process
 from unidecode import unidecode
 
-from litmap import common
+from litmap import common, years
 
 FUZZY_THRESHOLD = 95  # in the pilot data, every pair below this was a different work (errata, datasets)
 MAX_YEAR_GAP = 1  # online-first and print years can differ by one
@@ -57,12 +59,14 @@ def deduplicate(run_dir=None, fuzzy_threshold=FUZZY_THRESHOLD):
   groups, joins, merges = find_groups(df, fuzzy_threshold)
   previous = pd.read_parquet(out_path) if out_path.exists() else None
   merged, retired = merge_groups(df, groups, previous)
+  merged, year_checks = years.check_years(merged, years.run_year(run_dir.name))
   assert merged["record_id"].is_unique, "record ids must be unique"
 
   _save(merged, out_path)
 
   dedup_run = common.run_id()
   _log_merges(dedup_run, run_dir.name, _member_ids(df).tolist(), merges)
+  _log_year_checks(dedup_run, year_checks)
 
   summary = {
     "event": "summary",
@@ -82,6 +86,8 @@ def deduplicate(run_dir=None, fuzzy_threshold=FUZZY_THRESHOLD):
     "fuzzy_threshold": fuzzy_threshold,
     "max_year_gap": MAX_YEAR_GAP,
     "retired_record_ids": retired,
+    "year_flags": len(year_checks),
+    "years_corrected": sum(check["source"] == "related_works" for check in year_checks),
   }
 
   common.append_log("dedup", summary)
@@ -339,6 +345,11 @@ def _log_merges(dedup_run, search_run, member_ids, merges):
     })
 
 
+def _log_year_checks(dedup_run, year_checks):
+  for check in year_checks:
+    common.append_log("dedup", {"event": "year_check", "dedup_run": dedup_run, **check})
+
+
 def _print_summary(summary):
   joins = ", ".join(f"{rule} {count}" for rule, count in summary["joins"].items())
   chased = f", {summary['chase_records']} of them from citation chasing" if summary["chase_records"] else ""
@@ -349,6 +360,10 @@ def _print_summary(summary):
     f"{summary['records_in']} identified -> {summary['duplicates_removed']} duplicates removed"
     f" -> {summary['records_out']} records -> {summary['output_file']}"
   )
+
+  if summary["year_flags"]:
+    print(f"years: {summary['year_flags']} flagged as doubtful, {summary['years_corrected']} corrected"
+          " from related works, see the year_check events in logs/dedup.jsonl")
 
   if summary["retired_record_ids"]:
     retired = len(summary["retired_record_ids"])

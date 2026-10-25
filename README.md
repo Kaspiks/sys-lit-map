@@ -10,11 +10,11 @@ The full plan is in [docs/architecture.md](docs/architecture.md).
 | # | Stage | Module | Output | Status |
 |---|---|---|---|---|
 | 1 | Search: Europe PMC, PubMed, OpenAlex (no year or language limits in the queries) | `search.py`, `sources/` | `data/raw/<run>/`, `logs/search.jsonl` | done |
-| 2 | Deduplication: DOI → PMID → title → fuzzy title, never across different DOIs | `dedup.py` | `data/interim/records.parquet`, `logs/dedup.jsonl` | done |
-| 3 | Screening: rule pre-filter → ranker → human decisions | `rules.py`, `rank.py`, `screening.py`, `ui/` | `data/interim/prefiltered.parquet`, `logs/screening.jsonl` | rules and screening UI done; ranker next |
-| 4 | Citation chasing via OpenAlex, new records back through stage 2 | `chase.py` | `data/raw/chase/<round>/`, `logs/chase.jsonl` | plumbing done; OpenAlex calls next |
-| 5 | Extraction: intrinsic and extrinsic factors | `extract.py` | `data/processed/extraction.csv` | planned |
-| 6 | Reporting: PRISMA-ScR flow from the logs, charts, PRISMA-S search report | `report.py` | `outputs/` | planned |
+| 2 | Deduplication: DOI → PMID → title → fuzzy title, never across different DOIs; then a check of doubtful years | `dedup.py`, `years.py` | `data/interim/records.parquet`, `logs/dedup.jsonl` | done |
+| 3 | Screening: rule pre-filter → ranker → human decisions | `rules.py`, `rank.py`, `screening.py`, `ui/` | `data/interim/prefiltered.parquet`, `logs/screening.jsonl` | done |
+| 4 | Citation chasing via OpenAlex, new records back through stage 2 | `chase.py` | `data/raw/chase/<round>/`, `logs/chase.jsonl` | done |
+| 5 | Extraction: intrinsic and extrinsic factors, filled in from the full texts | `extract.py` | `data/processed/extraction.xlsx`, `.csv` | done; form is a draft |
+| 6 | Reporting: PRISMA-ScR flow from the logs, charts, PRISMA-S search report | `report.py` | `outputs/`, `logs/report.jsonl` | done |
 
 The search definition, scope limits and validation set live in `config/search.yaml`.
 
@@ -63,8 +63,31 @@ docker exec -it litmap python -m litmap.ui
   validation studies hidden inside it. Model scores are never shown.
 - Your initials, the seed, the seed set size, the stopping rule and the exclusion reasons are in
   `config/screening.yaml`. Logs store the reason codes, so labels can be reworded safely.
-- The record trail (http://localhost:8000/trail) shows everything the logs say about one record,
-  and checks that the files the logs fingerprinted are unchanged.
+- Under each record, the concept check shows which search.yaml terms it contains, block by block.
+  For a block with none, it suggests the exclusion reason that fits (`when_missing` in
+  `config/screening.yaml`); you still decide.
+- The sidebar has the other pages, all read from the logs:
+  - **Record trail** (`/trail`): everything the logs say about one record (which search found it,
+    how it was merged, which rules ran, every screening event), whether the fingerprinted files are
+    unchanged, plus tabs for all rule exclusions, all deduplication joins and the raw event logs.
+    `python -m litmap.trail <record id>` prints the same trail in the terminal.
+  - **Citation registry** (`/registry`): every deduplicated record and where it stands.
+  - **PRISMA flow** (`/prisma`): the flow diagram and charts, and a button that writes the report files.
+  - **Ranker** (`/ranker`): the recall curve and every iteration, with a button to replay it.
+  - **Second screener** (`/adjudication`): starts blind screening and shows Cohen's kappa.
+  - **Config** (`/config`): the config files with their SHA-256, and whether `search.yaml` still
+    matches the copy saved with the latest search run. **Start new search & reset screening**
+    archives the previous run in `data/archive/<timestamp>-<id>/` (raw data, logs, rankings,
+    models, extraction, reports, and a config copy), then runs a fresh database search,
+    deduplicates, and applies the current filters. Screening restarts at zero in the seed order
+    set by `screening.yaml`; old labels and rankings do not carry over. A failed rebuild restores
+    the previous run and keeps failed outputs inside the archive. Progress remains available
+    when you return to the page. Keep the UI server running until it finishes.
+- A second screener opens `/?screener=XY` with their own initials (or starts from the Second
+  screener page). They get a fixed random sample (`second_screener.sample_size`, default 150), in
+  random order, without the ranker and without seeing your decisions. Their decisions go to the
+  same log under their initials, and agreement on relevance (include or maybe, against exclude) is
+  measured with Cohen's kappa.
 - The port only accepts connections from this Mac. To screen on a phone on the same Wi-Fi, change
   `127.0.0.1:8000:8000` to `8000:8000` in `docker-compose.yml` and run `docker compose up -d`;
   there is no login, so anyone on that network could then open it.
@@ -74,20 +97,25 @@ docker exec -it litmap python -m litmap.ui
 ```
 src/litmap/
   common.py        paths, run ids, file hashes, logging, the common record table
-  config.py        reading config/search.yaml
+  config.py        reading config/search.yaml, screening.yaml and extraction.yaml
   search.py        stage 1: runs every source, saves the run, checks the validation set
   sources/         one adapter per database, all with the same interface
     query.py       concept blocks -> boolean query, query checks, language codes
     http.py        requests with retries, readable errors, cursor paging
     pubmed.py  europepmc.py  openalex.py
   dedup.py         stage 2
-  rules.py         stage 3, step 1: rule pre-filter (rank.py: step 2, next)
-  screening.py     stage 3: decisions as logged events, queue order, stopping rule
+  years.py         stage 2: flags theses and repository items dated by a re-registration, corrects them
+  rules.py         stage 3, step 1: rule pre-filter
+  rank.py          stage 3, step 2: the ranker, its iterations and replay
+  screening.py     stage 3: decisions as logged events, queue order, stopping rule, second screener
+  agreement.py     your decisions against the blind second screener's: Cohen's kappa
   trail.py         record trail: one record's history across all logs
   concepts.py      finding the search.yaml concept terms (screen highlighting, ranker features)
-  ui/              screening interface (Flask app + one HTML page per view)
-  chase.py         stage 4: citation chasing through OpenAlex (OpenAlex calls to write)
-  extract.py  report.py   stages 5-6 (planned)
+  ui/              the interface: Flask app (app.py, views.py) and static/, one HTML page and
+                   script per page, sharing layout.js (sidebar and header) and shared.js
+  chase.py         stage 4: citation chasing through OpenAlex
+  extract.py       stage 5: extraction sheet from config/extraction.yaml, check, export
+  report.py        stage 6: PRISMA-ScR counts and flow diagram, charts, PRISMA-S search report
 ```
 
 ## Environment (Docker)
@@ -149,7 +177,37 @@ that the pipeline hasn't seen are saved as `data/raw/chase/<round>/`, logged in
 `logs/chase.jsonl`. Then run `dedup.deduplicate()` and `rules.apply_rules()`: the new records
 join the screening queue, existing record ids stay the same. Repeat after screening them; stop
 when a round brings no new includes. Settings: the `chase:` section of `config/search.yaml`.
-The OpenAlex calls (`lookup_openalex_id`, `references`, `citations`) are still to write.
+
+### Data extraction
+
+The form you fill in while reading each full text is `config/extraction.yaml` (a draft: refine
+it with your supervisor). In the container:
+
+```bash
+python -m litmap.extract template
+```
+
+That writes `data/processed/extraction.xlsx`: one row per study you included or marked maybe,
+with its citation and link filled in, dropdowns for the one-answer fields, and the form on a
+second sheet. Fill it in in Excel or Numbers. Rerun `template` after more screening: new studies
+are added, your entries kept, and the previous file saved as `extraction.previous.xlsx`.
+`python -m litmap.extract check` lists every problem; `export` writes the checked rows to
+`data/processed/extraction.csv` for the report. Both files are tracked in git.
+
+### Reporting
+
+```bash
+python -m litmap.report
+```
+
+That writes `outputs/`: `prisma_counts.json` and the PRISMA-ScR flow diagram (`prisma_flow.svg`,
+`.png`), the charts in `outputs/figures/` (database overlap, the recall curve, publication years,
+and from the extraction export how running experience is reported and which characteristics were
+tested as moderators), and `search_report.md`, the search documented following PRISMA-S. Every
+number comes from the logs and saved files, and every file is logged with its SHA-256 in
+`logs/report.jsonl`. Counts still in progress (awaiting screening, awaiting full-text reading) are
+shown as such, so the report can be generated at any point. The PRISMA flow page shows the same
+diagram and charts live, and its button runs the same build.
 
 ### Debugging in VS Code
 

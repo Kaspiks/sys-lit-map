@@ -8,40 +8,42 @@
   <script type="module" src="/static/screening.js"></script>
 </head>
 <body>
-  <header class="topbar">
-    <span class="brand">litmap</span>
-    <nav>
-      <a href="/" aria-current="page">Screening</a>
-      <a href="/trail" id="trail-link">Record trail</a>
-    </nav>
-    <span class="screener">Screener <strong id="screener"></strong></span>
-  </header>
+  <div class="app">
+    <nav class="sidebar" id="sidebar" aria-label="Pages"></nav>
 
-  <section class="stats" id="stats" aria-label="Progress"></section>
-  <div id="banners"></div>
+    <div class="page">
+      <header class="page-header" id="header"></header>
 
-  <main class="workspace">
-    <article class="card record" id="record" aria-live="polite"></article>
+      <main class="screening">
+        <section class="stats" id="stats" aria-label="Progress"></section>
+        <section class="term-strip" id="term-strip" aria-label="Highlighted terms"></section>
+        <div id="banners"></div>
 
-    <aside class="side">
-      <section class="card panel">
-        <h2>Highlighted terms</h2>
-        <div id="legend"></div>
-      </section>
+        <div class="workspace">
+          <div class="record-column">
+            <article class="card record" id="record" aria-live="polite"></article>
+            <footer class="actions" id="actions" aria-label="Decision"></footer>
+          </div>
 
-      <section class="card panel">
-        <h2>Recent decisions</h2>
-        <ol class="recent" id="recent"></ol>
-      </section>
+          <aside class="side">
+            <section class="card panel">
+              <h2>Event feed</h2>
+              <p class="panel-note">Your decisions and undos, as logged in logs/screening.jsonl</p>
+              <ol class="feed" id="feed"></ol>
+              <a class="panel-link" href="/trail?tab=events">Open the event log</a>
+            </section>
 
-      <section class="card panel">
-        <h2>Exclusion reasons</h2>
-        <ol class="reason-key" id="reason-key"></ol>
-      </section>
-    </aside>
-  </main>
+            <section class="card panel">
+              <h2>Exclusion reasons</h2>
+              <p class="panel-note">Press E, then the reason's number</p>
+              <ol class="reason-key" id="reason-key"></ol>
+            </section>
+          </aside>
+        </div>
+      </main>
+    </div>
+  </div>
 
-  <footer class="actions" id="actions" aria-label="Decision"></footer>
   <p class="toast" id="toast" role="status" hidden></p>
 </body>
 </html>

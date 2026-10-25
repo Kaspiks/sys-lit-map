@@ -362,7 +362,24 @@ def replay(iteration):
 
   same_order = list(replayed["record_id"]) == list(saved["record_id"])
 
-  return same_order and np.allclose(replayed["score"], saved["score"])
+  return bool(same_order and np.allclose(replayed["score"], saved["score"]))
+
+
+def iterations():
+  """Every logged iteration, oldest first, summarised for the ranker page."""
+
+  return [
+    {
+      "iteration": event["iteration"],
+      "timestamp": event["timestamp"],
+      "model": event["ranker"].get("model", DEFAULT_MODEL),
+      "features": event["ranker"].get("features", list(FEATURE_GROUPS)),
+      "trained_on": len(event["training"]),
+      "relevant": sum(label == RELEVANT for _, label in event["training"]),
+      "replayable": "pool_sha256" in event,
+    }
+    for event in _rank_events()
+  ]
 
 
 def print_top(ranking, count=TOP_TO_PRINT):

@@ -14,6 +14,8 @@ ROOT = Path(__file__).resolve().parents[2]
 CONFIG_DIR = ROOT / "config"
 RAW_DIR = ROOT / "data" / "raw"
 INTERIM_DIR = ROOT / "data" / "interim"
+PROCESSED_DIR = ROOT / "data" / "processed"
+OUTPUTS_DIR = ROOT / "outputs"
 LOG_DIR = ROOT / "logs"
 MODELS_DIR = ROOT / "models"
 

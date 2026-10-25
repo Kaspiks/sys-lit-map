@@ -17,6 +17,8 @@ from litmap import common
 from litmap.config import load_config
 from litmap.sources import SOURCES
 
+QUERY_SECTIONS = ("sources", "search_in", "concepts", "filters")  # the parts of search.yaml the queries use
+
 
 def run_search(cfg=None, filters=False):
   """Run the config's search on every source and save everything needed to reproduce it.
@@ -43,6 +45,22 @@ def run_search(cfg=None, filters=False):
   _print_totals(records, records_path, validation)
 
   return records
+
+
+def changes_since_last_run(cfg=None):
+  """Which query sections of search.yaml differ from the copy saved with the latest search run.
+
+  An empty `changed` list means the results on disk are what the current search.yaml finds.
+  """
+
+  cfg = cfg or load_config()
+  run_dir = common.latest_run()
+  saved = load_config(run_dir / "config.yaml")
+
+  return {
+    "run": run_dir.name,
+    "changed": [section for section in QUERY_SECTIONS if cfg.get(section) != saved.get(section)],
+  }
 
 
 def check_validation(cfg, records):

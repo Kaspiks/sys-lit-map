@@ -1,0 +1,51 @@
+# Data-charting form (stage 5, extract.py): the columns you fill in while reading each full text.
+# DRAFT: refine the fields and options with your supervisor before extracting.
+#
+# type:          text | integer | number | choice (one option) | choices (several, separated by ;)
+# required_for:  full-text decisions for which the field must be filled (include and/or exclude)
+# Changing an option later doesn't break filled rows, but check() will flag values no longer allowed.
+
+fields:
+  # Full-text eligibility (PRISMA: reports assessed, and reasons for exclusion)
+  - {name: full_text, type: choice, options: [include, exclude],
+     label: "Full-text decision. Leave empty until you've read it"}
+  - {name: full_text_reason, type: choice, required_for: [exclude],
+     options: [not_running, no_auditory_pacing, wrong_outcome, wrong_population, not_empirical, no_full_text, other],
+     label: "Why it's excluded at full text"}
+
+  # Sample (intrinsic factors)
+  - {name: n_participants, type: integer, required_for: [include], label: "Participants analysed"}
+  - {name: n_female, type: integer, label: "Of whom female"}
+  - {name: age_mean, type: number, label: "Mean age in years"}
+  - {name: age_sd, type: number, label: "SD of age in years"}
+  - {name: population, type: text, label: "Who they were, as the study describes them"}
+  - {name: experience_level, type: choice, required_for: [include],
+     options: [novice, recreational, trained, elite, mixed, not_reported],
+     label: "Running experience of the sample"}
+  - {name: experience_measures, type: choices, required_for: [include],
+     options: [years_running, weekly_distance, training_frequency, race_times, self_reported_level,
+               club_membership, other, not_reported],
+     label: "How running experience is reported"}
+  - {name: experience_details, type: text, label: "Experience as reported (quote or close paraphrase)"}
+  - {name: musical_background, type: choice, options: [measured, described, not_reported],
+     label: "Musical background of participants"}
+  - {name: preferred_cadence, type: choice, options: [measured, not_measured],
+     label: "Whether the preferred cadence was measured"}
+
+  # Stimulus and setting (extrinsic factors)
+  - {name: stimulus, type: choices, required_for: [include], options: [music, metronome, other_auditory],
+     label: "Auditory pacing used"}
+  - {name: tempo, type: text, label: "Tempo, e.g. preferred cadence ±5%, or 170 BPM"}
+  - {name: instruction, type: choice, options: [spontaneous, instructed, both, not_reported],
+     label: "Were runners told to synchronise?"}
+  - {name: setting, type: choice, options: [treadmill, overground, both, not_reported]}
+
+  # Outcomes and moderators (the review question)
+  - {name: outcomes, type: choices, required_for: [include],
+     options: [cadence, step_frequency, synchronisation, entrainment, phase_coupling, other],
+     label: "Outcomes measured"}
+  - {name: moderators_tested, type: choices, required_for: [include],
+     options: [running_experience, musical_background, sex, age, preferred_cadence, other, none],
+     label: "Participant characteristics tested as moderators"}
+  - {name: moderator_findings, type: text, label: "What the moderator analyses found"}
+  - {name: notes, type: text}

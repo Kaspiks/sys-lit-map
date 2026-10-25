@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Citation registry · litmap</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script type="module" src="/static/registry.js"></script>
+</head>
+<body>
+  <div class="app">
+    <nav class="sidebar" id="sidebar" aria-label="Pages"></nav>
+
+    <div class="page">
+      <header class="page-header" id="header"></header>
+
+      <main class="registry">
+        <div class="toolbar">
+          <input type="search" id="search" placeholder="Search titles, record ids and years"
+            aria-label="Search the registry">
+          <div class="filters" id="filters" role="group" aria-label="Status"></div>
+        </div>
+        <div id="registry"></div>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

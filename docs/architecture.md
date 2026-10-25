@@ -36,7 +36,7 @@ Six stages, each a separate module that reads the previous stage's output file a
 | # | Stage | Module | Input | Output | Key design decisions |
 | --- | --- | --- | --- | --- | --- |
 | 1 | Search | `search.py`, one adapter per source in `sources/` | `config/search.yaml` | `data/raw/<run>/`: `config.yaml`, `<source>.json`, `records.csv` | One adapter per source translates the concept blocks into that API's syntax; no year or language limits in the queries; every query string, date, hit count and file hash logged; raw responses stored unchanged; validation set checked on every run |
-| 2 | Deduplication | `dedup.py` | `data/raw/<run>/records.csv` | `data/interim/records.parquet` | Normalise DOIs (lowercase, strip prefixes); link same DOI → same PMID → same normalised title → fuzzy title (token_sort_ratio ≥ 95, years ≤ 1 apart, same numbers in both titles); title and fuzzy matches never join records with different DOIs, so they only match records without a DOI; keep the richest metadata; stable record ids across reruns; log every merge |
+| 2 | Deduplication | `dedup.py`, `years.py` | `data/raw/<run>/records.csv` | `data/interim/records.parquet` | Normalise DOIs (lowercase, strip prefixes); link same DOI → same PMID → same normalised title → fuzzy title (token_sort_ratio ≥ 95, years ≤ 1 apart, same numbers in both titles); title and fuzzy matches never join records with different DOIs, so they only match records without a DOI; keep the richest metadata; stable record ids across reruns; log every merge; then dissertations and repository items dated the search year, or more than a year after related works (same author, similar title), are flagged, and the latter get the related works' year, logged with its source |
 | 3 | Screening | `rules.py`, `rank.py`, `screening.py`, `ui/` | deduplicated records | decisions log | Rules drop clear negatives; ranker orders the rest; a person decides every record; exclusion reason required |
 | 4 | Citation chasing | `chase.py` | studies included in stage 3 | new candidate records | Backward (references) and forward (citing works) via OpenAlex; repeat until a round adds no new includes; new records re-enter deduplication, which keeps existing record ids |
 | 5 | Extraction | `extract.py` | included studies | `data/processed/extraction.csv` | Fixed schema: intrinsic factors (experience, musical background, sex, age, preferred cadence) and extrinsic factors (stimulus, tempo, instruction, setting) |
@@ -55,7 +55,9 @@ Machines rank and suggest; a person makes every inclusion and exclusion decision
 5. **Full-text eligibility.** Includes and maybes only; open-access full text where available, otherwise via library access.
 6. **Rejected-pile audit.** A random 5–10% sample of records removed at each stage is checked by hand; the estimated false-negative rate is reported.
 
-**Screening interface:** keyboard shortcuts and swipe (left to exclude, right to include; vertical swipes stay free for scrolling); key terms highlighted (running, music, metronome, cadence, synchronisation); one-tap exclusion reasons; undo; a blind second-screener mode for a random sample of 100–200 records, with Cohen's kappa computed automatically.
+**Screening interface:** keyboard shortcuts and swipe (left to exclude, right to include; vertical swipes stay free for scrolling); key terms highlighted (running, music, metronome, cadence, synchronisation); a concept check per record (which search.yaml blocks it matches, with the fitting exclusion reason suggested for a block with no terms); one-tap exclusion reasons; undo; an event feed of the latest decisions and undos; a blind second-screener mode for a fixed random sample of 150 records, with Cohen's kappa computed automatically.
+
+**The other pages read the same logs** and change nothing except where noted: the record trail (one record's history across every log, with file fingerprints checked), the citation registry (every record's status), the PRISMA flow (diagram and charts, plus a button that writes the report files), the ranker (recall curve, iterations and replay), the second screener's agreement, and the config files with their SHA-256 and whether search.yaml still matches the latest search run.
 
 ## Data, logging and reproducibility
 
@@ -63,12 +65,12 @@ Every result can be traced back to a logged query or a logged human decision, an
 
 | Folder | Holds |
 | --- | --- |
-| `config/` | `search.yaml` (concept blocks, sources, scope limits, validation set), `screening.yaml` (screener, seed, seed set size, stopping rule, exclusion reason codes; ranker features to come) |
+| `config/` | `search.yaml` (concept blocks, sources, scope limits, validation set, citation chasing), `screening.yaml` (screener, seed, seed set size, stopping rule, exclusion reason codes, ranker settings, second-screener sample size), `extraction.yaml` (the data-charting form) |
 | `data/raw/` | One folder per search run: untouched API responses (one file per source), the config used, all records stacked |
 | `data/interim/` | Deduplicated records, rule-flagged records, rankings per iteration |
 | `data/processed/` | Labelled set, extraction table |
 | `models/` | Trained ranker per iteration |
-| `logs/` | `search.jsonl`, `dedup.jsonl`, `screening.jsonl` (append-only) |
+| `logs/` | `search.jsonl`, `dedup.jsonl`, `screening.jsonl`, `chase.jsonl`, `extraction.jsonl`, `report.jsonl` (append-only) |
 | `outputs/` | PRISMA-ScR flow, charts, search report |
 
 **One screening log line per event**, for example: `{"iteration": 4, "event": "decision", "record_id": "openalex:W123", "rank": 3, "score": 0.81, "label": "exclude", "reason": "no auditory stimulus", "screener": "KM", "timestamp": "…"}`

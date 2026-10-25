@@ -8,10 +8,11 @@ seed_set_size: 100  # records screened in random order before the ranker takes o
 stopping_rule:
   irrelevant_in_a_row: 100
 
+# when_missing: the screening page suggests the reason when a record has none of that concept block's terms
 exclusion_reasons:
-  - {code: not_running, label: "Not running (walking, cycling, other sports)"}
-  - {code: no_auditory_pacing, label: "No music or metronome used as pacing"}
-  - {code: wrong_outcome, label: "Outcome not cadence, step frequency or synchronisation"}
+  - {code: not_running, label: "Not running (walking, cycling, other sports)", when_missing: population}
+  - {code: no_auditory_pacing, label: "No music or metronome used as pacing", when_missing: exposure}
+  - {code: wrong_outcome, label: "Outcome not cadence, step frequency or synchronisation", when_missing: outcome}
   - {code: wrong_population, label: "Clinical population, children or animals"}
   - {code: not_empirical, label: "Review, opinion or protocol"}
   - {code: other, label: "Other", note_required: true}
@@ -24,3 +25,6 @@ ranker:
   n_estimators: 500
   class_weight: balanced
   tfidf: {ngram_range: [1, 2], min_df: 2}
+
+second_screener:
+  sample_size: 150

@@ -8,11 +8,15 @@ Records come from the rule pre-filter: rows of data/interim/prefiltered.parquet 
 empty excluded_by. The seed set comes first, in a fixed random order, because its labels
 train the ranker and must not be biased by any ranking. After it, the latest ranker
 iteration (rank.py) decides the order, and the ranker retrains after every batch of decisions.
+
+A second screener (any initials other than screening.yaml's screener) screens blind: a fixed
+random sample of the pool, without the ranker's order and without seeing your decisions.
+agreement.py then compares the two.
 """
 
 import random
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import NamedTuple
 
 import pandas as pd
@@ -28,6 +32,7 @@ DEFAULT_BATCH_SIZE = 25
 SEED_SET_QUEUE = "random_seed_set"
 RANKED_QUEUE = "ranker"
 UNRANKED_QUEUE = "random"
+SECOND_SCREENER_QUEUE = "second_screener_sample"
 
 
 class Ranking(NamedTuple):
@@ -58,27 +63,44 @@ class Workspace:
   key_total: int
   decisions: dict  # record_id -> decision still in force, oldest first
   ranking: Ranking | None = None
+  screener: str = ""  # whose view this is; empty means screening.yaml's screener
+  events: list = field(default_factory=list)  # this screener's decisions and undos, oldest first
 
   @classmethod
-  def load(cls, settings=None, search_cfg=None, pool=None, events=None):
+  def load(cls, settings=None, search_cfg=None, pool=None, events=None, screener=None):
     settings = settings or load_screening_settings()
     search_cfg = search_cfg or load_config()
     pool = load_pool() if pool is None else pool
     events = common.read_log("screening") if events is None else events
+    screener = screener or settings.screener
     validation = search_cfg.get("validation") or []
     key_ids = validation_record_ids(pool, validation)
-    ranking = latest_ranking(events)
-    random_order = queue_order(pool.index, key_ids, settings.seed, settings.seed_set_size)
+
+    if screener == settings.screener:
+      ranking = latest_ranking(events)
+      random_order = queue_order(pool.index, key_ids, settings.seed, settings.seed_set_size)
+      order = screening_order(random_order, settings.seed_set_size, ranking)
+    else:
+      ranking = None
+      order = second_screener_sample(pool.index, settings.seed, settings.second_sample_size)
 
     return cls(
       settings=settings,
       pool=pool,
-      order=screening_order(random_order, settings.seed_set_size, ranking),
+      order=order,
       key_ids=key_ids,
       key_total=len(validation),
-      decisions=replay_decisions(events, settings.screener),
+      decisions=replay_decisions(events, screener),
       ranking=ranking,
+      screener=screener,
+      events=[event for event in events if event.get("stage") == STAGE and event.get("screener") == screener],
     )
+
+  @property
+  def blind(self):
+    """True for a second screener: a random sample, no ranker, nobody else's decisions."""
+
+    return bool(self.screener) and self.screener != self.settings.screener
 
   def next_record_id(self):
     return next((record_id for record_id in self.order if record_id not in self.decisions), None)
@@ -93,8 +115,10 @@ class Workspace:
     seed_set = self.order[:self.settings.seed_set_size]
 
     return {
+      "screener": self.screener or self.settings.screener,
+      "blind": self.blind,
       "screened": len(self.decisions),
-      "pool": len(self.pool),
+      "pool": len(self.order) if self.blind else len(self.pool),
       "irrelevant_in_a_row": in_a_row,
       "stop_after": self.settings.stop_after_irrelevant,
       "key_studies_found": key_found,
@@ -117,10 +141,11 @@ class Workspace:
 
     return self._retrain_in() == 0
 
-  def recent(self, count=5):
-    """The latest decisions still in force, newest first."""
+  def feed(self, count=8):
+    """This screener's latest decision and undo events, newest first, numbered in log order."""
+    numbered = [{"number": number, **event} for number, event in enumerate(self.events, start=1)]
 
-    return list(self.decisions.values())[::-1][:count]
+    return numbered[::-1][:count]
 
   def decide(self, record_id, label, reason=None, note=None, seconds=None):
     """Record a decision on the record that is due next. Returns the logged event."""
@@ -138,8 +163,8 @@ class Workspace:
       "label": label,
       "reason": reason if label == "exclude" else None,
       "note": note or None,
-      "screener": self.settings.screener,
-      **self._queue_details(record_id),
+      "screener": self.screener or self.settings.screener,
+      **self.queue_details(record_id),
       "queue_position": self.order.index(record_id) + 1,
       "seconds_on_record": seconds,
       "timestamp": common.now(),
@@ -147,6 +172,7 @@ class Workspace:
 
     common.append_log("screening", event)
     self.decisions[record_id] = event
+    self.events.append(event)
 
     return event
 
@@ -163,12 +189,13 @@ class Workspace:
       "stage": STAGE,
       "undoes": decision["decision_id"],
       "record_id": record_id,
-      "screener": self.settings.screener,
+      "screener": self.screener or self.settings.screener,
       "timestamp": common.now(),
     }
 
     common.append_log("screening", event)
     del self.decisions[record_id]
+    self.events.append(event)
 
     return event
 
@@ -189,7 +216,12 @@ class Workspace:
 
     return max(0, batch_size - new_decisions)
 
-  def _queue_details(self, record_id):
+  def queue_details(self, record_id):
+    """Which queue the record comes from and, for the ranker's queue, its rank and score (logged only)."""
+
+    if self.blind:
+      return {"queue": SECOND_SCREENER_QUEUE}
+
     if record_id in self.order[:self.settings.seed_set_size]:
       return {"queue": SEED_SET_QUEUE}
 
@@ -256,6 +288,46 @@ def queue_order(record_ids, key_ids, seed, seed_set_size):
     order.insert(rng.randint(0, seed_set_end), key_id)
 
   return order
+
+
+def second_screener_sample(record_ids, seed, size):
+  """The blind second screener's records: a fixed random sample of the pool, in random order."""
+  rng = random.Random(f"{seed}-second-screener")
+  record_ids = sorted(record_ids)
+
+  return rng.sample(record_ids, min(size, len(record_ids)))
+
+
+def record_statuses(workspace=None):
+  """Every deduplicated record and where it stands, for the citation registry.
+
+  status is excluded_by_rule, include, maybe, exclude (your decisions) or to_screen.
+  """
+
+  workspace = workspace or Workspace.load()
+  flagged = pd.read_parquet(common.INTERIM_DIR / "prefiltered.parquet").set_index("record_id")
+  rows = []
+
+  for record_id, record in flagged.iterrows():
+    decision = workspace.decisions.get(record_id)
+
+    if common.plain(record["excluded_by"]):
+      status, detail = "excluded_by_rule", record["excluded_by"]
+    elif decision:
+      status, detail = decision["label"], decision.get("reason")
+    else:
+      status, detail = "to_screen", None
+
+    rows.append({
+      "record_id": record_id,
+      "title": common.plain(record["title"]),
+      "year": common.plain(record["year"]),
+      "databases": record["databases"],
+      "status": status,
+      "detail": detail,
+    })
+
+  return rows
 
 
 def latest_ranking(events):

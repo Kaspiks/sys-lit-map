@@ -55,3 +55,13 @@ class ConceptTerms:
       counts[match.lastgroup] += 1
 
     return counts
+
+  def term_hits(self, text):
+    """Which terms of each block occur, and how often: {"population": {"runners": 2}, ...}."""
+    hits = {block: {} for block in self.blocks}
+
+    for match in self.pattern.finditer(text):
+      term = " ".join(match.group().lower().split())
+      hits[match.lastgroup][term] = hits[match.lastgroup].get(term, 0) + 1
+
+    return hits
