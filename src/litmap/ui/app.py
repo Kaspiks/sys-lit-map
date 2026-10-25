@@ -9,7 +9,7 @@ from functools import partial
 from flask import Flask, Response, abort, g, jsonify, request
 
 import litmap
-from litmap import agreement, common, rank, report, search, trail, rules
+from litmap import agreement, bookmarks, common, rank, report, search, trail, rules
 from litmap.concepts import ConceptTerms
 
 from litmap.config import (
@@ -22,6 +22,7 @@ from litmap.ui.rebuild import SearchRebuild
 
 PAGES = {
   "/": "screening.html",
+  "/bookmarks": "bookmarks.html",
   "/trail": "trail.html",
   "/registry": "registry.html",
   "/prisma": "prisma.html",
@@ -31,7 +32,7 @@ PAGES = {
 }
 
 CONFIG_FILES = (CONFIG_PATH, SCREENING_CONFIG_PATH, EXTRACTION_CONFIG_PATH)
-LOGS = ("search", "dedup", "screening", "chase", "extraction", "report")
+LOGS = ("search", "dedup", "screening", "bookmarks", "chase", "extraction", "report")
 EVENT_LIMIT = 200
 INITIALS = re.compile(r"[A-Z]{2,4}")
 
@@ -52,21 +53,27 @@ def create_app(
   def guard_pipeline_during_rebuild():
     if not request.path.startswith("/api/") or request.path.startswith("/api/config") or request.path == "/api/session":
       return
+
     while True:
       if rebuild.state()["status"] == "running":
         response = jsonify(
           error="A search rebuild is in progress. Return to Config to check progress.",
           code="search_rebuilding",
         )
+
         response.headers["Retry-After"] = "1"
+
         return response, 503
+
       # Ordinary page requests often run in parallel. Wait for them instead of treating
       # contention as a rebuild; check frequently so a real rebuild does not hold HTTP open.
       if rebuild.access_lock.acquire(timeout=0.05):
         if rebuild.state()["status"] == "running":
           rebuild.access_lock.release()
           continue
+
         g.pipeline_locked = True
+
         return
 
   @app.teardown_request
@@ -89,8 +96,9 @@ def create_app(
 
   def current_state(workspace):
     concept_terms = ConceptTerms(load_search_config()["concepts"])
+    bookmarked = set(bookmarks.bookmarks(workspace.screener))
 
-    return state_view(workspace, concept_terms)
+    return state_view(workspace, concept_terms, bookmarked)
 
   def search_sync():
     """How search.yaml compares with the latest search run, or None before the first run."""
@@ -110,6 +118,7 @@ def create_app(
       question=load_search_config().get("question"),
       screener=settings.screener,
       second_screeners=agreement.second_screeners(settings=settings),
+      bookmarks=len(bookmarks.bookmarks(settings.screener)),
       search_sync=search_sync(),
       version=litmap.__version__,
     )
@@ -146,6 +155,38 @@ def create_app(
     workspace.undo_last()
 
     return jsonify(current_state(workspace))
+
+  # Bookmarks: kept for later, whatever the decision
+
+  @app.get("/api/bookmarks")
+  def get_bookmarks():
+    workspace = load_workspace(screener=_screener(request.args))
+    statuses = {row["record_id"]: row for row in record_statuses(workspace)}
+    marks = bookmarks.bookmarks(workspace.screener)
+
+    return jsonify([
+      {**mark, **{key: statuses.get(record_id, {}).get(key) for key in ("status", "detail")}}
+      for record_id, mark in reversed(marks.items())  # newest first; no status: not in this search run
+    ])
+
+  @app.post("/api/bookmarks")
+  def post_bookmark():
+    body = request.get_json(silent=True) or {}
+    screener = _screener(body) or load_settings().screener
+    record_id = body.get("record_id")
+
+    if not body.get("bookmarked", True):
+      if record_id in bookmarks.bookmarks(screener):
+        bookmarks.remove(record_id, screener)
+
+      return jsonify(record_id=record_id, bookmarked=False)
+
+    try:
+      event = bookmarks.add(record_id, screener, note=body.get("note"))
+    except KeyError:
+      return jsonify(error="No record with that id."), 404
+
+    return jsonify(record_id=record_id, bookmarked=True, note=event["note"])
 
   # Record trail and citation registry
 
@@ -249,11 +290,13 @@ def create_app(
   @app.post("/api/config/reload")
   def post_reload_config():
     """Read the current config files; pipeline loaders already read from disk on each call."""
+
     return get_config()
 
   @app.post("/api/config/rebuild")
   def post_rebuild_config():
     """Start search → deduplication → filters without holding a long HTTP request open."""
+
     return jsonify(rebuild.start(load_search_config())), 202
 
   @app.get("/api/config/rebuild")

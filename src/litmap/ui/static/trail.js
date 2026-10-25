@@ -143,10 +143,15 @@ async function showRecord(session) {
     return;
   }
 
-  const trail = await api(`/api/trail?q=${encodeURIComponent(query)}`);
+  const [trail, marks] = await Promise.all([
+    api(`/api/trail?q=${encodeURIComponent(query)}`),
+    api("/api/bookmarks"),
+  ]);
+
+  const bookmarked = marks.some((mark) => mark.record_id === trail.record_id);
 
   $("panel").replaceChildren(
-    recordCard(trail, session),
+    recordCard(trail, session, bookmarked),
     h("div", { class: "trail-grid" }, foundBySection(trail.search), rulesSection(trail.rules)),
     dedupSection(trail),
     screeningSection(trail.screening),
@@ -154,7 +159,7 @@ async function showRecord(session) {
   );
 }
 
-function recordCard(trail, session) {
+function recordCard(trail, session, bookmarked) {
   const record = trail.record;
   const meta = [record.journal, record.year, ...externalLinks(record)].filter(Boolean);
   const unchanged = trail.files.filter((file) => file.status === "unchanged").length;
@@ -170,6 +175,7 @@ function recordCard(trail, session) {
     h("h2", { class: "record-title" }, record.title ?? trail.record_id),
     h("p", { class: "meta" }, meta.map((item) => h("span", {}, item))),
     h("div", { class: "record-tools" },
+      bookmarkButton(trail.record_id, bookmarked),
       h("a", {
         class: "button small",
         href: URL.createObjectURL(json),
@@ -183,6 +189,29 @@ function recordCard(trail, session) {
         h("code", {}, `python -m litmap.trail ${trail.record_id}`)),
     ),
   );
+}
+
+function bookmarkButton(recordId, bookmarked) {
+  const button = h("button", { type: "button", class: "small" });
+
+  const show = (on) => {
+    button.textContent = on ? "★ Bookmarked" : "☆ Bookmark";
+    button.setAttribute("aria-pressed", String(on));
+  };
+
+  button.addEventListener("click", async () => {
+    const on = button.getAttribute("aria-pressed") !== "true";
+
+    try {
+      show((await api("/api/bookmarks", { record_id: recordId, bookmarked: on })).bookmarked);
+    } catch (error) {
+      button.title = error.message;
+    }
+  });
+
+  show(bookmarked);
+
+  return button;
 }
 
 /** [status, text] for the badge: a rule's exclusion, else your decision in force, else still to screen. */

@@ -101,6 +101,26 @@ async function send(path, body) {
   }
 }
 
+/** Bookmark the record, or take the bookmark off. The record stays on screen: it isn't a decision. */
+async function toggleBookmark() {
+  if (view.busy) return;
+
+  const record = view.state.record;
+  const body = { record_id: record.record_id, screener, bookmarked: !record.bookmarked };
+
+  view.busy = true;
+
+  try {
+    record.bookmarked = (await api("/api/bookmarks", body)).bookmarked;
+    showToast(record.bookmarked ? "Bookmarked. Decide as usual: it stays in Bookmarks" : "Bookmark removed");
+    renderActions();
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    view.busy = false;
+  }
+}
+
 function askReason() {
   view.mode = "reason";
   renderActions();
@@ -140,6 +160,7 @@ function keyAction(key, target) {
   if (view.mode === "reason") return reasonForKey(key);
   if (key === "u" || key === "backspace") return undo;
   if (!view.state.record || view.mode !== "decide") return null;
+  if (key === "b") return toggleBookmark;
   if (key === "e" || key === "arrowleft") return askReason;
   if (key === "m" || key === "arrowup") return () => decide("maybe");
   if (key === "i" || key === "arrowright") return () => decide("include");
@@ -447,8 +468,12 @@ function renderActions() {
   } else if (view.mode === "note") {
     bar.replaceChildren(noteForm(view.pendingReason));
   } else {
+    const { bookmarked } = view.state.record;
+
     bar.replaceChildren(
       actionButton("Undo", "U", undo),
+      actionButton(bookmarked ? "★ Bookmarked" : "☆ Bookmark", "B", toggleBookmark,
+        bookmarked ? "bookmark on" : "bookmark", "keep for later"),
       actionButton("Exclude", "E ←", askReason, "exclude", `then 1–${view.state.reasons.length}`),
       actionButton("Maybe", "M ↑", () => decide("maybe"), "maybe", "check the full text"),
       actionButton("Include", "I →", () => decide("include"), "include", "goes to full-text reading"),

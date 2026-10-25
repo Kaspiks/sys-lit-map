@@ -55,7 +55,7 @@ Start the screening interface in the container, then open http://localhost:8000 
 docker exec -it litmap python -m litmap.ui
 ```
 
-- Keys: `I` include, `M` maybe, `E` exclude (then `1`-`6` for the reason), `U` undo, `Esc` cancel.
+- Keys: `I` include, `M` maybe, `E` exclude (then `1`-`6` for the reason), `U` undo, `B` bookmark, `Esc` cancel.
   On a phone, swipe left to exclude and right to include.
 - Every decision and undo is appended to `logs/screening.jsonl`, and the screen is rebuilt from that
   log on every action, so closing the browser loses nothing.
@@ -66,6 +66,11 @@ docker exec -it litmap python -m litmap.ui
 - Under each record, the concept check shows which search.yaml terms it contains, block by block.
   For a block with none, it suggests the exclusion reason that fits (`when_missing` in
   `config/screening.yaml`); you still decide.
+- `B` bookmarks the record you're reading, for studies you want to come back to even if they don't
+  fit the review. A bookmark isn't a decision, so decide as usual; it never counts in screening, the
+  ranker or the PRISMA flow. The **Bookmarks** page (`/bookmarks`) lists them with your decision and
+  a note for why each is interesting. Bookmarks are logged in `logs/bookmarks.jsonl` and kept when
+  you start a new search.
 - The sidebar has the other pages, all read from the logs:
   - **Record trail** (`/trail`): everything the logs say about one record (which search found it,
     how it was merged, which rules ran, every screening event), whether the fingerprinted files are
@@ -109,6 +114,7 @@ src/litmap/
   rank.py          stage 3, step 2: the ranker, its iterations and replay
   screening.py     stage 3: decisions as logged events, queue order, stopping rule, second screener
   agreement.py     your decisions against the blind second screener's: Cohen's kappa
+  bookmarks.py     records kept for later, whatever the decision (logs/bookmarks.jsonl)
   trail.py         record trail: one record's history across all logs
   concepts.py      finding the search.yaml concept terms (screen highlighting, ranker features)
   ui/              the interface: Flask app (app.py, views.py) and static/, one HTML page and

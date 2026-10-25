@@ -125,7 +125,8 @@ function rebuildMessage(job) {
         `Recovery needs attention; the previous files are in ${job.archive}.`);
   }
   return "Starts from scratch: searches all configured databases, deduplicates, and applies current filters. " +
-    "Previous results, decisions, rankings, citation chasing, and extraction are archived. Screening restarts at 0.";
+    "Previous results, decisions, rankings, citation chasing, and extraction are archived; bookmarks are kept. " +
+    "Screening restarts at 0.";
 }
 
 async function restore() {

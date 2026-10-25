@@ -7,7 +7,7 @@ from litmap.common import plain
 SECTION_LABEL = re.compile(r"(?:^|(?<=\s))([A-Z][A-Z ,&/-]{2,40}):\s")
 
 
-def state_view(workspace, concept_terms):
+def state_view(workspace, concept_terms, bookmarked=frozenset()):
   record_id = workspace.next_record_id()
   record = workspace.pool.loc[record_id] if record_id else None
   reasons = workspace.settings.exclusion_reasons
@@ -15,7 +15,10 @@ def state_view(workspace, concept_terms):
   return {
     "screener": workspace.screener,
     "progress": workspace.progress(),
-    "record": record_view(record_id, record, concept_terms, reasons) if record_id else None,
+    "record": {
+      **record_view(record_id, record, concept_terms, reasons),
+      "bookmarked": record_id in bookmarked,
+    } if record_id else None,
     "queue": workspace.queue_details(record_id)["queue"] if record_id else None,  # never the score
     "feed": feed_view(workspace),
     "reasons": [vars(reason) for reason in reasons],

@@ -2,6 +2,7 @@ import { $, api, h, present } from "./shared.js";
 
 const NAV = [
   ["/", "Screening"],
+  ["/bookmarks", "Bookmarks"],
   ["/trail", "Record trail"],
   ["/registry", "Citation registry"],
   ["/prisma", "PRISMA flow"],
@@ -16,6 +17,7 @@ const NAV = [
  */
 export async function renderLayout(title, { screener = null, chips = [] } = {}) {
   const session = await api("/api/session");
+  const counts = { "/bookmarks": session.bookmarks };
 
   $("sidebar").replaceChildren(...present([
     h("a", { class: "brand", href: "/" },
@@ -27,7 +29,8 @@ export async function renderLayout(title, { screener = null, chips = [] } = {}) 
       h("p", { title: session.question }, session.question),
     ),
     h("ul", { class: "nav" }, NAV.map(([href, label]) => h("li", {},
-      h("a", { href, "aria-current": href === window.location.pathname ? "page" : null }, label),
+      h("a", { href, "aria-current": href === window.location.pathname ? "page" : null },
+        label, counts[href] > 0 && h("span", { class: "nav-count" }, String(counts[href]))),
     ))),
     screenerCard(session, screener),
   ]));

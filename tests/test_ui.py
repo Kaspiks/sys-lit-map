@@ -55,6 +55,7 @@ def ranker():
 @pytest.fixture
 def client(tmp_path, monkeypatch, settings, ranker):
   monkeypatch.setattr(common, "ROOT", tmp_path)
+
   for name, relative in {
     "LOG_DIR": "logs", "CONFIG_DIR": "config", "RAW_DIR": "data/raw",
     "INTERIM_DIR": "data/interim", "PROCESSED_DIR": "data/processed",
@@ -132,14 +133,17 @@ def test_rebuild_runs_all_stages_and_prevents_duplicate_jobs(client, monkeypatch
     calls.append(("search", cfg))
     started.set()
     assert release.wait(5)
+
     return [1, 2, 3]
 
   def deduplicate():
     calls.append(("dedup", None))
+
     return [1, 2]
 
   def apply_rules(cfg):
     calls.append(("rules", cfg))
+
     return pd.DataFrame({"excluded_by": [None, "language_not_allowed"]})
 
   monkeypatch.setattr("litmap.ui.rebuild.search.run_search", run_search)
@@ -148,6 +152,7 @@ def test_rebuild_runs_all_stages_and_prevents_duplicate_jobs(client, monkeypatch
 
   assert client.get("/api/config/rebuild").get_json()["status"] == "idle"
   job = client.application.extensions["search_rebuild"]
+
   try:
     response = client.post("/api/config/rebuild", json={})
     assert response.status_code == 202
@@ -171,6 +176,7 @@ def test_rebuild_runs_all_stages_and_prevents_duplicate_jobs(client, monkeypatch
   assert calls[0][1] == calls[2][1] == {"concepts": CONCEPTS}
   result = client.get("/api/config/rebuild").get_json()
   assert result.pop("archive").startswith("data/archive/")
+
   assert result == {
     "status": "complete", "stage": "Finished", "found": 3, "records": 2, "to_screen": 1,
   }
@@ -195,6 +201,7 @@ def test_rebuild_reports_failure_and_can_be_retried(client, monkeypatch):
     job.thread.join(5)
     result = client.get("/api/config/rebuild").get_json()
     assert result.pop("archive").startswith("data/archive/")
+
     assert result == {
       "status": "failed", "stage": "Searching databases", "error": "Database unavailable", "restored": True,
     }
@@ -210,6 +217,7 @@ def test_parallel_reads_wait_for_each_other_without_claiming_a_rebuild(client):
   class ObservedLock:
     def acquire(self, **kwargs):
       attempted.set()
+
       return lock.acquire(**kwargs)
 
     def release(self):
@@ -222,12 +230,15 @@ def test_parallel_reads_wait_for_each_other_without_claiming_a_rebuild(client):
       return other.get("/api/state")
 
   lock.acquire()
+
   with ThreadPoolExecutor(max_workers=1) as executor:
     future = executor.submit(read_state)
+
     try:
       assert attempted.wait(5)
     finally:
       lock.release()
+
     response = future.result(timeout=5)
 
   assert response.status_code == 200
@@ -295,3 +306,40 @@ def test_screener_initials_are_checked(client):
 def test_only_known_logs_can_be_read(client):
   assert client.get("/api/events?log=../config").status_code == 400
   assert client.get("/api/events?log=screening").get_json()["total"] == 0
+
+
+def _write_records(*record_ids):
+  """The deduplicated, rule-checked records the registry and bookmarks read."""
+  common.INTERIM_DIR.mkdir(parents=True, exist_ok=True)
+
+  pd.DataFrame({
+    "record_id": list(record_ids),
+    "title": [f"Title of {record_id}" for record_id in record_ids],
+    "year": [2020] * len(record_ids),
+    "databases": ["pubmed"] * len(record_ids),
+    "excluded_by": [None] * len(record_ids),
+  }).to_parquet(common.INTERIM_DIR / "prefiltered.parquet", index=False)
+
+
+def test_a_bookmark_keeps_the_record_on_screen_and_decides_nothing(client):
+  _write_records("pubmed:1", "openalex:W2")
+  first = client.get("/api/state").get_json()["record"]["record_id"]
+
+  added = client.post("/api/bookmarks", json={"record_id": first, "bookmarked": True}).get_json()
+  state = client.get("/api/state").get_json()
+  listed = client.get("/api/bookmarks").get_json()
+
+  assert added["bookmarked"] and state["record"]["record_id"] == first and state["record"]["bookmarked"]
+  assert state["progress"]["screened"] == 0
+  assert [(mark["record_id"], mark["status"]) for mark in listed] == [(first, "to_screen")]
+
+  client.post("/api/bookmarks", json={"record_id": first, "bookmarked": False})
+
+  assert not client.get("/api/state").get_json()["record"]["bookmarked"]
+  assert client.get("/api/bookmarks").get_json() == []
+
+
+def test_unknown_records_cant_be_bookmarked(client):
+  _write_records("pubmed:1")
+
+  assert client.post("/api/bookmarks", json={"record_id": "pubmed:404"}).status_code == 404

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bookmarks · litmap</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script type="module" src="/static/bookmarks.js"></script>
+</head>
+<body>
+  <div class="app">
+    <nav class="sidebar" id="sidebar" aria-label="Pages"></nav>
+
+    <div class="page">
+      <header class="page-header" id="header"></header>
+
+      <main class="bookmarks">
+        <p class="panel-note">Studies you want to come back to, whatever you decided about them. A bookmark
+          isn't a decision: it doesn't count in screening, the ranker or the PRISMA flow. Press B while
+          screening, or use Bookmark on a record's trail. They're logged in logs/bookmarks.jsonl and kept
+          when you start a new search.</p>
+        <div class="toolbar">
+          <input type="search" id="search" placeholder="Search titles, notes and journals"
+            aria-label="Search the bookmarks">
+          <div class="filters" id="filters" role="group" aria-label="Screening status"></div>
+        </div>
+        <div class="bookmark-list" id="bookmarks"></div>
+      </main>
+    </div>
+  </div>
+</body>
+</html>
